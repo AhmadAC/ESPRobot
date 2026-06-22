@@ -52,9 +52,10 @@ int32_t offset_high_left  = 0;
 int32_t offset_low_right  = 0;
 
 // --- Distance Sensor Control Variables ---
-bool sensor_enabled = true;
-int32_t distance_threshold = 20; // Default safety threshold is 20cm
-float current_distance = -1.0f;  // Current reading (-1.0f means out of bounds/error)
+bool sensor_enabled = false;      // ALWAYS BOOT DISABLED
+bool safety_lock_engaged = false; // Tracks if safety override is active
+int32_t distance_threshold = 20;  // Default safety threshold is 20cm
+float current_distance = -1.0f;   // Current reading (-1.0f means out of bounds/error)
 
 // --- Servo Logic ---
 void write_servo_calibrated(ledc_channel_t channel, int32_t target_angle, int32_t offset) {
@@ -108,8 +109,7 @@ void save_offsets_to_nvs() {
         nvs_set_i32(my_handle, "lr_off", offset_low_right);
         nvs_commit(my_handle);
         nvs_close(my_handle);
-        ESP_LOGI(TAG, "Offsets saved to NVS: LL=%ld, HR=%ld, HL=%ld, LR=%ld", 
-                 offset_low_left, offset_high_right, offset_high_left, offset_low_right);
+        ESP_LOGI(TAG, "Offsets saved to NVS.");
     }
 }
 
@@ -121,15 +121,11 @@ void load_offsets_from_nvs() {
         nvs_get_i32(my_handle, "hl_off", &offset_high_left);
         nvs_get_i32(my_handle, "lr_off", &offset_low_right);
         
-        // Load saved ultrasonic parameters on boot
-        uint8_t sens_en_val = 1;
-        nvs_get_u8(my_handle, "sens_en", &sens_en_val);
-        sensor_enabled = (sens_en_val == 1);
+        // Only load the threshold. Do not load sensor_enabled to ensure it stays off on boot.
         nvs_get_i32(my_handle, "sens_thresh", &distance_threshold);
 
         nvs_close(my_handle);
-        ESP_LOGI(TAG, "Loaded Offsets: LL=%ld, HR=%ld, HL=%ld, LR=%ld, SensorEn=%d, Thresh=%ldcm", 
-                 offset_low_left, offset_high_right, offset_high_left, offset_low_right, sensor_enabled, distance_threshold);
+        ESP_LOGI(TAG, "Loaded NVS Configs. Thresh=%ldcm. Sensor is OFF by default.", distance_threshold);
     }
 }
 
@@ -151,21 +147,18 @@ void init_ultrasonic() {
 }
 
 float read_ultrasonic_distance() {
-    // Send standard 10 microsecond pulse to Trig pin
     gpio_set_level(ULTRASONIC_TRIG_PIN, 0);
     esp_rom_delay_us(2);
     gpio_set_level(ULTRASONIC_TRIG_PIN, 1);
     esp_rom_delay_us(10);
     gpio_set_level(ULTRASONIC_TRIG_PIN, 0);
 
-    // Wait for Echo to go High
     int64_t start_time = esp_timer_get_time();
-    int64_t timeout = 40000; // 40ms timeout (approx. 6 meters max)
+    int64_t timeout = 40000; // 40ms timeout
     while (gpio_get_level(ULTRASONIC_ECHO_PIN) == 0) {
         if (esp_timer_get_time() - start_time > timeout) return -1.0f;
     }
 
-    // Measure how long Echo remains High
     int64_t echo_start = esp_timer_get_time();
     while (gpio_get_level(ULTRASONIC_ECHO_PIN) == 1) {
         if (esp_timer_get_time() - echo_start > timeout) return -1.0f;
@@ -173,14 +166,15 @@ float read_ultrasonic_distance() {
     int64_t echo_end = esp_timer_get_time();
 
     int64_t duration = echo_end - echo_start;
-    // Calculate distance in cm based on speed of sound (343m/s)
     float distance = (float)duration / 58.0f;
     return distance;
 }
 
 void ultrasonic_safety_task(void *pvParameter) {
     init_ultrasonic();
-    ESP_LOGI("SENSOR", "HC-SR04 Obstacle Safety Watchdog started.");
+    ESP_LOGI("SENSOR", "HC-SR04 Task Running. Waiting for web enable.");
+
+    bool last_lock_state = false;
 
     while (1) {
         if (sensor_enabled) {
@@ -188,10 +182,9 @@ void ultrasonic_safety_task(void *pvParameter) {
             current_distance = dist;
 
             if (dist > 0 && dist < distance_threshold) {
-                // Serial Warning log has been removed here to prevent console spam.
-                // The web UI will continue to poll and display the live distance silently.
+                safety_lock_engaged = true;
 
-                // Force-Halt and park all servos to safety (90 degrees)
+                // Force-Halt to 90 degrees
                 target_low_left = 90; target_high_right = 90;
                 target_high_left = 90; target_low_right = 90;
                 
@@ -199,11 +192,24 @@ void ultrasonic_safety_task(void *pvParameter) {
                 write_servo_calibrated(SERVO_HIGH_RIGHT_CH, target_high_right, offset_high_right);
                 write_servo_calibrated(SERVO_HIGH_LEFT_CH, target_high_left, offset_high_left);
                 write_servo_calibrated(SERVO_LOW_RIGHT_CH, target_low_right, offset_low_right);
+            } else {
+                safety_lock_engaged = false;
             }
         } else {
+            safety_lock_engaged = false;
             current_distance = -1.0f;
         }
-        // Query distance every 100 milliseconds
+
+        // SMART LOGGING: Only print when the lock state physically changes to prevent console spam
+        if (safety_lock_engaged != last_lock_state) {
+            if (safety_lock_engaged) {
+                ESP_LOGW("SENSOR", "Safety Lock ENGAGED! Obstacle at %.1f cm", current_distance);
+            } else {
+                ESP_LOGI("SENSOR", "Safety Lock RELEASED. Resuming manual control.");
+            }
+            last_lock_state = safety_lock_engaged;
+        }
+
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
@@ -211,7 +217,6 @@ void ultrasonic_safety_task(void *pvParameter) {
 // --- Native USB REPL / Debug Listener Task ---
 void console_read_task(void *pvParameter) {
     ESP_LOGI("REPL", "USB CDC REPL Listener Started.");
-    
     int fd = fileno(stdin);
     int flags = fcntl(fd, F_GETFL);
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
@@ -222,23 +227,15 @@ void console_read_task(void *pvParameter) {
         if (len > 0) {
             for (int i = 0; i < len; i++) {
                 if (buf[i] == 0x03) { // Ctrl+C
-                    ESP_LOGW("REPL", "--> [Interrupt] Ctrl+C received!");
-                    ESP_LOGW("REPL", "--> Halting and centering all servos.");
-                    
+                    ESP_LOGW("REPL", "Halting and centering all servos.");
                     target_low_left = 90; target_high_right = 90;
                     target_high_left = 90; target_low_right = 90;
-                    
                     write_servo_calibrated(SERVO_LOW_LEFT_CH, target_low_left, offset_low_left);
                     write_servo_calibrated(SERVO_HIGH_RIGHT_CH, target_high_right, offset_high_right);
                     write_servo_calibrated(SERVO_HIGH_LEFT_CH, target_high_left, offset_high_left);
                     write_servo_calibrated(SERVO_LOW_RIGHT_CH, target_low_right, offset_low_right);
-
                 } else if (buf[i] == 0x04) { // Ctrl+D
-                    ESP_LOGW("REPL", "--> [Soft Reset] Ctrl+D received! Rebooting in 1 second...");
-                    vTaskDelay(pdMS_TO_TICKS(1000));
                     esp_restart();
-                } else if (buf[i] >= 32 && buf[i] <= 126) {
-                    ESP_LOGI("REPL", "--> Received byte: '%c' (0x%02X)", buf[i], buf[i]);
                 }
             }
         }
@@ -268,17 +265,19 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         h2 { border-bottom: 2px solid #3498db; padding-bottom: 10px; color: #2c3e50; margin-top: 0; }
         .grid { display: grid; grid-template-columns: 1fr; gap: 20px; }
         @media (min-width: 600px) { .grid { grid-template-columns: 1fr 1fr; } }
-        .ctrl-group { background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #3498db; }
+        .ctrl-group { background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #3498db; transition: opacity 0.3s; }
         .ctrl-header { display: flex; justify-content: space-between; font-weight: bold; margin-bottom: 8px; }
         label { display: block; margin-bottom: 8px; font-weight: bold; }
         input[type=range] { width: 100%; margin-bottom: 15px; cursor: pointer; }
+        input[type=range]:disabled { cursor: not-allowed; opacity: 0.5; }
         button { background: #3498db; color: white; border: none; padding: 12px 20px; border-radius: 6px; cursor: pointer; font-size: 15px; width: 100%; transition: 0.2s; }
         button:hover { background: #2980b9; }
         select, input[type=password], input[type=number] { width: 100%; padding: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 6px; margin-bottom: 15px; }
         .pass-container { display: flex; gap: 10px; align-items: center; margin-bottom: 15px; }
         .pass-container input { margin-bottom: 0; }
-        .badge { background: #e74c3c; color: white; padding: 3px 8px; border-radius: 12px; font-size: 11px; }
         #status { font-weight: bold; color: #16a085; text-align: center; margin-top: 10px; }
+        #lock_banner { display: none; background: #e74c3c; color: white; padding: 12px; border-radius: 8px; text-align: center; font-weight: bold; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(231, 76, 60, 0.3); }
+        .locked-mode .ctrl-group { opacity: 0.6; pointer-events: none; }
     </style>
 </head>
 <body>
@@ -308,24 +307,29 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
     </div>
 
     <!-- Active Robot Servo Control -->
-    <div class='card'>
+    <div class='card' id='servo_card'>
         <h2>Servo Kinematics Control</h2>
+        
+        <div id='lock_banner'>
+            ⚠️ MOTORS LOCKED: Obstacle Detected! Move robot or disable sensor to restore manual control.
+        </div>
+
         <div class='grid'>
             <div class='ctrl-group'>
                 <div class='ctrl-header'><span>Low Left Leg (IO12)</span><span id='val_low_left'>90&deg;</span></div>
-                <input type='range' id='low_left' min='0' max='180' value='90' oninput='moveServo("low_left", this.value)'>
+                <input type='range' class='srv-slider' id='low_left' min='0' max='180' value='90' oninput='moveServo("low_left", this.value)'>
             </div>
             <div class='ctrl-group'>
                 <div class='ctrl-header'><span>High Right Shoulder (IO10)</span><span id='val_high_right'>90&deg;</span></div>
-                <input type='range' id='high_right' min='0' max='180' value='90' oninput='moveServo("high_right", this.value)'>
+                <input type='range' class='srv-slider' id='high_right' min='0' max='180' value='90' oninput='moveServo("high_right", this.value)'>
             </div>
             <div class='ctrl-group'>
                 <div class='ctrl-header'><span>High Left Shoulder (IO11)</span><span id='val_high_left'>90&deg;</span></div>
-                <input type='range' id='high_left' min='0' max='180' value='90' oninput='moveServo("high_left", this.value)'>
+                <input type='range' class='srv-slider' id='high_left' min='0' max='180' value='90' oninput='moveServo("high_left", this.value)'>
             </div>
             <div class='ctrl-group'>
                 <div class='ctrl-header'><span>Low Right Leg (IO9)</span><span id='val_low_right'>90&deg;</span></div>
-                <input type='range' id='low_right' min='0' max='180' value='90' oninput='moveServo("low_right", this.value)'>
+                <input type='range' class='srv-slider' id='low_right' min='0' max='180' value='90' oninput='moveServo("low_right", this.value)'>
             </div>
         </div>
 
@@ -333,15 +337,15 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         <div class='grid'>
             <div class='ctrl-group' style='border-left-color: #f1c40f;'>
                 <div class='ctrl-header'><span>All Leg Motors (Combined)</span><span id='val_all'>90&deg;</span></div>
-                <input type='range' id='all' min='0' max='180' value='90' oninput='moveServo("all", this.value)'>
+                <input type='range' class='srv-slider' id='all' min='0' max='180' value='90' oninput='moveServo("all", this.value)'>
             </div>
             <div class='ctrl-group' style='border-left-color: #2ecc71;'>
                 <div class='ctrl-header'><span>Front Pairs (High Left & Right)</span><span id='val_front'>90&deg;</span></div>
-                <input type='range' id='front' min='0' max='180' value='90' oninput='moveServo("front", this.value)'>
+                <input type='range' class='srv-slider' id='front' min='0' max='180' value='90' oninput='moveServo("front", this.value)'>
             </div>
             <div class='ctrl-group' style='border-left-color: #e67e22;'>
                 <div class='ctrl-header'><span>Back Pairs (Low Left & Right)</span><span id='val_back'>90&deg;</span></div>
-                <input type='range' id='back' min='0' max='180' value='90' oninput='moveServo("back", this.value)'>
+                <input type='range' class='srv-slider' id='back' min='0' max='180' value='90' oninput='moveServo("back", this.value)'>
             </div>
         </div>
     </div>
@@ -388,8 +392,8 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
 </div>
 
 <script>
-    let localSensorEnabled = true;
-    let servoTimeouts = {}; // Store debouncers separately for each slider
+    let localSensorEnabled = false; // Start matching the hardware default
+    let servoTimeouts = {}; 
 
     function scan() {
         document.getElementById('status').innerText = 'Scanning Wi-Fi...';
@@ -406,7 +410,6 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         let p = document.getElementById('pass').value;
         if(!s) { alert('Please scan & select an SSID.'); return; }
         
-        // Removed Content-Type to prevent CORS OPTIONS Preflight
         fetch('/save', {
             method: 'POST', 
             body: JSON.stringify({ssid: s, pass: p})
@@ -418,7 +421,6 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         
         clearTimeout(servoTimeouts[id]);
         servoTimeouts[id] = setTimeout(() => {
-            // Removed Content-Type to prevent CORS OPTIONS Preflight
             fetch('/servo', {
                 method: 'POST',
                 body: JSON.stringify({id: id, angle: parseInt(angle)})
@@ -438,7 +440,6 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
 
     function sendSensorConfig() {
         let thresh = parseInt(document.getElementById('threshold').value) || 20;
-        // Removed Content-Type to prevent CORS OPTIONS Preflight
         fetch('/sensor', {
             method: 'POST',
             body: JSON.stringify({enabled: localSensorEnabled, threshold: thresh})
@@ -447,11 +448,27 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
 
     function updateStatus() {
         fetch('/angles').then(r => r.json()).then(data => {
-            // Update Servos
+            
+            // Handle Safety Lock UI State
+            let srvCard = document.getElementById('servo_card');
+            let srvSliders = document.querySelectorAll('.srv-slider');
+            
+            if (data.safety_lock) {
+                document.getElementById('lock_banner').style.display = 'block';
+                srvCard.classList.add('locked-mode');
+                srvSliders.forEach(slider => slider.disabled = true);
+            } else {
+                document.getElementById('lock_banner').style.display = 'none';
+                srvCard.classList.remove('locked-mode');
+                srvSliders.forEach(slider => slider.disabled = false);
+            }
+
+            // Update Servos Visuals
             for (let [leg, stats] of Object.entries(data)) {
-                if (leg !== "sensor_enabled" && leg !== "sensor_distance" && leg !== "sensor_threshold") {
+                if (typeof stats === 'object') {
                     let el = document.getElementById(leg);
-                    if(el && document.activeElement !== el) { // Don't interrupt user drag
+                    // Force UI update if safety locked, otherwise respect user drag
+                    if(el && (document.activeElement !== el || data.safety_lock)) { 
                         el.value = stats.angle; 
                         document.getElementById('val_' + leg).innerHTML = stats.angle + '&deg;'; 
                     }
@@ -467,7 +484,7 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
             let liveSpan = document.getElementById('live_dist');
             if (data.sensor_enabled) {
                 liveSpan.innerText = data.sensor_distance >= 0 ? data.sensor_distance.toFixed(1) : "Out of Range";
-                liveSpan.style.color = "#27ae60";
+                liveSpan.style.color = (data.sensor_distance > 0 && data.sensor_distance < data.sensor_threshold) ? "#e74c3c" : "#27ae60";
             } else {
                 liveSpan.innerText = "Disabled";
                 liveSpan.style.color = "#7f8c8d";
@@ -489,7 +506,6 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         });
     }
 
-    // Pull current system configurations dynamically every 500 milliseconds
     window.onload = function() {
         updateStatus();
         setInterval(updateStatus, 500);
@@ -501,7 +517,6 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         let hl = parseInt(document.getElementById('off_high_left').value) || 0;
         let lr = parseInt(document.getElementById('off_low_right').value) || 0;
 
-        // Removed Content-Type to prevent CORS OPTIONS Preflight
         fetch('/calibrate', {
             method: 'POST',
             body: JSON.stringify({low_left: ll, high_right: hr, high_left: hl, low_right: lr, save: false})
@@ -514,7 +529,6 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         let hl = parseInt(document.getElementById('off_high_left').value) || 0;
         let lr = parseInt(document.getElementById('off_low_right').value) || 0;
 
-        // Removed Content-Type to prevent CORS OPTIONS Preflight
         fetch('/calibrate', {
             method: 'POST',
             body: JSON.stringify({low_left: ll, high_right: hr, high_left: hl, low_right: lr, save: true})
@@ -694,11 +708,13 @@ static esp_err_t sensor_post_handler(httpd_req_t *req) {
 
         nvs_handle_t my_handle;
         if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
-            nvs_set_u8(my_handle, "sens_en", sensor_enabled ? 1 : 0);
             nvs_set_i32(my_handle, "sens_thresh", distance_threshold);
             nvs_commit(my_handle);
             nvs_close(my_handle);
         }
+
+        ESP_LOGI(TAG, "Web UI Updated Sensor -> Enabled: %s, Threshold: %ldcm", 
+                 sensor_enabled ? "YES" : "NO", distance_threshold);
 
         cJSON_Delete(json);
         httpd_resp_sendstr(req, "OK");
@@ -731,8 +747,9 @@ static esp_err_t angles_get_handler(httpd_req_t *req) {
     cJSON_AddNumberToObject(lr, "offset", offset_low_right);
     cJSON_AddItemToObject(root, "low_right", lr);
 
-    // Added distance sensor output tracking parameters for the web UI polling sequence 
+    // Provide sensor status & safety states back to the web polling loop
     cJSON_AddBoolToObject(root, "sensor_enabled", sensor_enabled);
+    cJSON_AddBoolToObject(root, "safety_lock", safety_lock_engaged);
     cJSON_AddNumberToObject(root, "sensor_distance", current_distance);
     cJSON_AddNumberToObject(root, "sensor_threshold", distance_threshold);
 
