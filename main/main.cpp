@@ -11,18 +11,27 @@
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_http_server.h"
+#include "esp_timer.h"
+#include "esp_rom_sys.h"
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "cJSON.h"
 
 static const char *TAG = "ESPROBOT";
 httpd_handle_t server = NULL;
-
-// --- Pin Definitions ---
+//Low Left Leg: Connect to GPIO 12 (marked as 12 or IO12)
+//High Left Shoulder: Connect to GPIO 11 (marked as 11 or IO11)
+//High Right Shoulder: Connect to GPIO 10 (marked as 10 or IO10)
+//Low Right Leg: Connect to GPIO 9 (marked as 9 or IO9)
+// --- Servo Pin Definitions ---
 #define SERVO_LOW_LEFT_PIN   GPIO_NUM_12 // CH0
 #define SERVO_HIGH_RIGHT_PIN GPIO_NUM_10 // CH1
 #define SERVO_HIGH_LEFT_PIN  GPIO_NUM_11 // CH2
 #define SERVO_LOW_RIGHT_PIN  GPIO_NUM_9  // CH3
+
+// --- HC-SR04 Sensor Pin Definitions ---
+#define ULTRASONIC_TRIG_PIN  GPIO_NUM_4
+#define ULTRASONIC_ECHO_PIN  GPIO_NUM_5
 
 // --- LEDC Channels ---
 #define SERVO_LOW_LEFT_CH    LEDC_CHANNEL_0
@@ -40,6 +49,11 @@ int32_t offset_low_left   = 0;
 int32_t offset_high_right = 0;
 int32_t offset_high_left  = 0;
 int32_t offset_low_right  = 0;
+
+// --- Distance Sensor Control Variables ---
+bool sensor_enabled = true;
+int32_t distance_threshold = 20; // Default safety threshold is 20cm
+float current_distance = -1.0f;  // Current reading (-1.0f means out of bounds/error)
 
 // --- Servo Logic ---
 void write_servo_calibrated(ledc_channel_t channel, int32_t target_angle, int32_t offset) {
@@ -111,11 +125,84 @@ void load_offsets_from_nvs() {
     }
 }
 
+// --- Ultrasonic Logic & Safety Driver Task ---
+void init_ultrasonic() {
+    gpio_config_t io_conf = {};
+    io_conf.intr_type = GPIO_INTR_DISABLE;
+    io_conf.mode = GPIO_MODE_OUTPUT;
+    io_conf.pin_bit_mask = (1ULL << ULTRASONIC_TRIG_PIN);
+    io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
+    gpio_config(&io_conf);
+
+    io_conf.mode = GPIO_MODE_INPUT;
+    io_conf.pin_bit_mask = (1ULL << ULTRASONIC_ECHO_PIN);
+    gpio_config(&io_conf);
+    
+    gpio_set_level(ULTRASONIC_TRIG_PIN, 0);
+}
+
+float read_ultrasonic_distance() {
+    // Send standard 10 microsecond pulse to Trig pin
+    gpio_set_level(ULTRASONIC_TRIG_PIN, 0);
+    esp_rom_delay_us(2);
+    gpio_set_level(ULTRASONIC_TRIG_PIN, 1);
+    esp_rom_delay_us(10);
+    gpio_set_level(ULTRASONIC_TRIG_PIN, 0);
+
+    // Wait for Echo to go High
+    int64_t start_time = esp_timer_get_time();
+    int64_t timeout = 40000; // 40ms timeout (approx. 6 meters max)
+    while (gpio_get_level(ULTRASONIC_ECHO_PIN) == 0) {
+        if (esp_timer_get_time() - start_time > timeout) return -1.0f;
+    }
+
+    // Measure how long Echo remains High
+    int64_t echo_start = esp_timer_get_time();
+    while (gpio_get_level(ULTRASONIC_ECHO_PIN) == 1) {
+        if (esp_timer_get_time() - echo_start > timeout) return -1.0f;
+    }
+    int64_t echo_end = esp_timer_get_time();
+
+    int64_t duration = echo_end - echo_start;
+    // Calculate distance in cm based on speed of sound (343m/s)
+    float distance = (float)duration / 58.0f;
+    return distance;
+}
+
+void ultrasonic_safety_task(void *pvParameter) {
+    init_ultrasonic();
+    ESP_LOGI("SENSOR", "HC-SR04 Obstacle Safety Watchdog started.");
+
+    while (1) {
+        if (sensor_enabled) {
+            float dist = read_ultrasonic_distance();
+            current_distance = dist;
+
+            if (dist > 0 && dist < distance_threshold) {
+                ESP_LOGW("SENSOR", "Collision Warning! Obstacle at %.1f cm (Halt Threshold: %ld cm)", dist, distance_threshold);
+                
+                // Force-Halt and park all servos to safety (90 degrees)
+                target_low_left = 90; target_high_right = 90;
+                target_high_left = 90; target_low_right = 90;
+                
+                write_servo_calibrated(SERVO_LOW_LEFT_CH, target_low_left, offset_low_left);
+                write_servo_calibrated(SERVO_HIGH_RIGHT_CH, target_high_right, offset_high_right);
+                write_servo_calibrated(SERVO_HIGH_LEFT_CH, target_high_left, offset_high_left);
+                write_servo_calibrated(SERVO_LOW_RIGHT_CH, target_low_right, offset_low_right);
+            }
+        } else {
+            current_distance = -1.0f;
+        }
+        // Query distance every 100 milliseconds
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
+
 // --- Native USB REPL / Debug Listener Task ---
 void console_read_task(void *pvParameter) {
     ESP_LOGI("REPL", "USB CDC REPL Listener Started.");
     
-    // Set standard input to non-blocking mode so it doesn't freeze the task
     int fd = fileno(stdin);
     int flags = fcntl(fd, F_GETFL);
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
@@ -142,12 +229,10 @@ void console_read_task(void *pvParameter) {
                     vTaskDelay(pdMS_TO_TICKS(1000));
                     esp_restart();
                 } else if (buf[i] >= 32 && buf[i] <= 126) {
-                    // Echo standard characters back for debug visibility
                     ESP_LOGI("REPL", "--> Received byte: '%c' (0x%02X)", buf[i], buf[i]);
                 }
             }
         }
-        // Poll every 20ms
         vTaskDelay(pdMS_TO_TICKS(20));
     }
 }
@@ -252,6 +337,23 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         </div>
     </div>
 
+    <!-- Distance Sensor & Collision Safeguard -->
+    <div class='card'>
+        <h2>Ultrasonic Obstacle Safety Monitor</h2>
+        <div class='grid'>
+            <div class='ctrl-group' style='border-left-color: #e74c3c;'>
+                <label>Sensor Toggle Status:</label>
+                <button id='btn_sensor' onclick='toggleSensor()'>Enable Sensor</button>
+                <p style='font-size: 16px; margin-top: 15px;'>Live Distance: <span id='live_dist' style='font-weight: bold; color: #34495e;'>--</span> cm</p>
+            </div>
+            <div class='ctrl-group' style='border-left-color: #9b59b6;'>
+                <div class='ctrl-header'><span>Safety Halt Threshold</span><span id='val_threshold'>20cm</span></div>
+                <input type='range' id='threshold' min='5' max='100' value='20' oninput='updateThreshold(this.value)'>
+                <p style='margin: 0; font-size: 11px; color: #7f8c8d; line-height: 1.4;'>Lock all leg and shoulder motors to 90&deg; automatically if an obstacle appears closer than this limit.</p>
+            </div>
+        </div>
+    </div>
+
     <!-- Alignment Software Calibration -->
     <div class='card'>
         <h2>Software Calibration (NVS Saved Offsets)</h2>
@@ -277,6 +379,8 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
 </div>
 
 <script>
+    let localSensorEnabled = true;
+
     function scan() {
         document.getElementById('status').innerText = 'Scanning Wi-Fi...';
         fetch('/scan').then(r => r.json()).then(d => {
@@ -303,17 +407,63 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         });
     }
 
-    // Pull current system configurations on document load
-    window.onload = function() {
+    function toggleSensor() {
+        localSensorEnabled = !localSensorEnabled;
+        sendSensorConfig();
+    }
+
+    function updateThreshold(val) {
+        document.getElementById('val_threshold').innerText = val + "cm";
+        sendSensorConfig();
+    }
+
+    function sendSensorConfig() {
+        let thresh = parseInt(document.getElementById('threshold').value) || 20;
+        fetch('/sensor', {
+            method: 'POST',
+            body: JSON.stringify({enabled: localSensorEnabled, threshold: thresh})
+        });
+    }
+
+    function updateStatus() {
         fetch('/angles').then(r => r.json()).then(data => {
-            // Populate Sliders
+            // Update Servos
             for (let [leg, stats] of Object.entries(data)) {
                 let el = document.getElementById(leg);
                 if(el) { el.value = stats.angle; document.getElementById('val_' + leg).innerHTML = stats.angle + '&deg;'; }
                 let offEl = document.getElementById('off_' + leg);
                 if(offEl) { offEl.value = stats.offset; }
             }
+
+            // Update Sensor Values
+            localSensorEnabled = data.sensor_enabled;
+            let liveSpan = document.getElementById('live_dist');
+            if (data.sensor_enabled) {
+                liveSpan.innerText = data.sensor_distance >= 0 ? data.sensor_distance.toFixed(1) : "Out of Range";
+                liveSpan.style.color = "#27ae60";
+            } else {
+                liveSpan.innerText = "Disabled";
+                liveSpan.style.color = "#7f8c8d";
+            }
+
+            let btn = document.getElementById('btn_sensor');
+            if (data.sensor_enabled) {
+                btn.innerText = "Disable Sensor";
+                btn.style.background = "#e74c3c";
+            } else {
+                btn.innerText = "Enable Sensor";
+                btn.style.background = "#27ae60";
+            }
+
+            document.getElementById('threshold').value = data.sensor_threshold;
+            document.getElementById('val_threshold').innerText = data.sensor_threshold + "cm";
         });
+    }
+
+    // Pull current system configurations dynamically every 500 milliseconds
+    window.onload = function() {
+        updateStatus();
+        setInterval(updateStatus, 500);
     }
 
     function updateOffsets() {
