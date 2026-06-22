@@ -388,7 +388,7 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
 
 <script>
     let localSensorEnabled = true;
-    let servoTimeout = null;
+    let servoTimeouts = {}; // Store debouncers separately for each slider
 
     function scan() {
         document.getElementById('status').innerText = 'Scanning Wi-Fi...';
@@ -404,9 +404,10 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         let s = document.getElementById('ssid').value;
         let p = document.getElementById('pass').value;
         if(!s) { alert('Please scan & select an SSID.'); return; }
+        
+        // Removed Content-Type to prevent CORS OPTIONS Preflight
         fetch('/save', {
             method: 'POST', 
-            headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ssid: s, pass: p})
         }).then(() => { alert('Network saved successfully! Robot rebooting in 2 seconds.'); });
     }
@@ -414,15 +415,14 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
     function moveServo(id, angle) {
         document.getElementById('val_' + id).innerHTML = angle + '&deg;';
         
-        // Debounce requests to prevent crashing the ESP32 network stack with too many concurrent saves
-        clearTimeout(servoTimeout);
-        servoTimeout = setTimeout(() => {
+        clearTimeout(servoTimeouts[id]);
+        servoTimeouts[id] = setTimeout(() => {
+            // Removed Content-Type to prevent CORS OPTIONS Preflight
             fetch('/servo', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({id: id, angle: parseInt(angle)})
             });
-        }, 50); 
+        }, 40); 
     }
 
     function toggleSensor() {
@@ -437,9 +437,9 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
 
     function sendSensorConfig() {
         let thresh = parseInt(document.getElementById('threshold').value) || 20;
+        // Removed Content-Type to prevent CORS OPTIONS Preflight
         fetch('/sensor', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({enabled: localSensorEnabled, threshold: thresh})
         });
     }
@@ -500,9 +500,9 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         let hl = parseInt(document.getElementById('off_high_left').value) || 0;
         let lr = parseInt(document.getElementById('off_low_right').value) || 0;
 
+        // Removed Content-Type to prevent CORS OPTIONS Preflight
         fetch('/calibrate', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({low_left: ll, high_right: hr, high_left: hl, low_right: lr, save: false})
         });
     }
@@ -513,9 +513,9 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         let hl = parseInt(document.getElementById('off_high_left').value) || 0;
         let lr = parseInt(document.getElementById('off_low_right').value) || 0;
 
+        // Removed Content-Type to prevent CORS OPTIONS Preflight
         fetch('/calibrate', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({low_left: ll, high_right: hr, high_left: hl, low_right: lr, save: true})
         }).then(() => { alert('Calibration parameters written securely to Flash NVS.'); });
     }
