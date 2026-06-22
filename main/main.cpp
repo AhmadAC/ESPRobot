@@ -188,8 +188,9 @@ void ultrasonic_safety_task(void *pvParameter) {
             current_distance = dist;
 
             if (dist > 0 && dist < distance_threshold) {
-                ESP_LOGW("SENSOR", "Collision Warning! Obstacle at %.1f cm (Halt Threshold: %ld cm)", dist, distance_threshold);
-                
+                // Serial Warning log has been removed here to prevent console spam.
+                // The web UI will continue to poll and display the live distance silently.
+
                 // Force-Halt and park all servos to safety (90 degrees)
                 target_low_left = 90; target_high_right = 90;
                 target_high_left = 90; target_low_right = 90;
