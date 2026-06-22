@@ -356,7 +356,7 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
             </div>
             <div class='ctrl-group' style='border-left-color: #9b59b6;'>
                 <div class='ctrl-header'><span>Safety Halt Threshold</span><span id='val_threshold'>20cm</span></div>
-                <input type='range' id='threshold' min='5' max='100' value='20' oninput='updateThreshold(this.value)'>
+                <input type='range' id='threshold' min='5' max='100' value='20' onchange='updateThreshold(this.value)'>
                 <p style='margin: 0; font-size: 11px; color: #7f8c8d; line-height: 1.4;'>Lock all leg and shoulder motors to 90&deg; automatically if an obstacle appears closer than this limit.</p>
             </div>
         </div>
@@ -388,6 +388,7 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
 
 <script>
     let localSensorEnabled = true;
+    let servoTimeout = null;
 
     function scan() {
         document.getElementById('status').innerText = 'Scanning Wi-Fi...';
@@ -403,16 +404,25 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         let s = document.getElementById('ssid').value;
         let p = document.getElementById('pass').value;
         if(!s) { alert('Please scan & select an SSID.'); return; }
-        fetch('/save', {method: 'POST', body: JSON.stringify({ssid: s, pass: p})})
-        .then(() => { alert('Network saved successfully! Robot rebooting in 2 seconds.'); });
+        fetch('/save', {
+            method: 'POST', 
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ssid: s, pass: p})
+        }).then(() => { alert('Network saved successfully! Robot rebooting in 2 seconds.'); });
     }
 
     function moveServo(id, angle) {
         document.getElementById('val_' + id).innerHTML = angle + '&deg;';
-        fetch('/servo', {
-            method: 'POST',
-            body: JSON.stringify({id: id, angle: parseInt(angle)})
-        });
+        
+        // Debounce requests to prevent crashing the ESP32 network stack with too many concurrent saves
+        clearTimeout(servoTimeout);
+        servoTimeout = setTimeout(() => {
+            fetch('/servo', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({id: id, angle: parseInt(angle)})
+            });
+        }, 50); 
     }
 
     function toggleSensor() {
@@ -429,6 +439,7 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         let thresh = parseInt(document.getElementById('threshold').value) || 20;
         fetch('/sensor', {
             method: 'POST',
+            headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({enabled: localSensorEnabled, threshold: thresh})
         });
     }
@@ -437,10 +448,17 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         fetch('/angles').then(r => r.json()).then(data => {
             // Update Servos
             for (let [leg, stats] of Object.entries(data)) {
-                let el = document.getElementById(leg);
-                if(el) { el.value = stats.angle; document.getElementById('val_' + leg).innerHTML = stats.angle + '&deg;'; }
-                let offEl = document.getElementById('off_' + leg);
-                if(offEl) { offEl.value = stats.offset; }
+                if (leg !== "sensor_enabled" && leg !== "sensor_distance" && leg !== "sensor_threshold") {
+                    let el = document.getElementById(leg);
+                    if(el && document.activeElement !== el) { // Don't interrupt user drag
+                        el.value = stats.angle; 
+                        document.getElementById('val_' + leg).innerHTML = stats.angle + '&deg;'; 
+                    }
+                    let offEl = document.getElementById('off_' + leg);
+                    if(offEl && document.activeElement !== offEl) { 
+                        offEl.value = stats.offset; 
+                    }
+                }
             }
 
             // Update Sensor Values
@@ -463,8 +481,10 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
                 btn.style.background = "#27ae60";
             }
 
-            document.getElementById('threshold').value = data.sensor_threshold;
-            document.getElementById('val_threshold').innerText = data.sensor_threshold + "cm";
+            if (document.activeElement !== document.getElementById('threshold')) {
+                document.getElementById('threshold').value = data.sensor_threshold;
+                document.getElementById('val_threshold').innerText = data.sensor_threshold + "cm";
+            }
         });
     }
 
@@ -482,6 +502,7 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
 
         fetch('/calibrate', {
             method: 'POST',
+            headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({low_left: ll, high_right: hr, high_left: hl, low_right: lr, save: false})
         });
     }
@@ -494,6 +515,7 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
 
         fetch('/calibrate', {
             method: 'POST',
+            headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({low_left: ll, high_right: hr, high_left: hl, low_right: lr, save: true})
         }).then(() => { alert('Calibration parameters written securely to Flash NVS.'); });
     }
@@ -532,24 +554,28 @@ static esp_err_t scan_get_handler(httpd_req_t *req) {
 static esp_err_t save_post_handler(httpd_req_t *req) {
     char buf[200];
     int ret, remaining = req->content_len;
-    size_t recv_len = (remaining < (int)sizeof(buf)) ? remaining : (int)sizeof(buf);
+    size_t recv_len = (remaining < (int)(sizeof(buf) - 1)) ? remaining : (int)(sizeof(buf) - 1);
     if ((ret = httpd_req_recv(req, buf, recv_len)) <= 0) return ESP_FAIL;
     buf[ret] = '\0';
     
     cJSON *json = cJSON_Parse(buf);
     if(json) {
-        const char *ssid = cJSON_GetObjectItem(json, "ssid")->valuestring;
-        const char *pass = cJSON_GetObjectItem(json, "pass")->valuestring;
-        nvs_handle_t my_handle;
-        nvs_open("storage", NVS_READWRITE, &my_handle);
-        nvs_set_str(my_handle, "wifi_ssid", ssid);
-        nvs_set_str(my_handle, "wifi_pass", pass);
-        nvs_commit(my_handle);
-        nvs_close(my_handle);
-        ESP_LOGI(TAG, "Saved SSID: %s", ssid);
+        cJSON *ssid_item = cJSON_GetObjectItem(json, "ssid");
+        cJSON *pass_item = cJSON_GetObjectItem(json, "pass");
+        
+        if (ssid_item && pass_item) {
+            nvs_handle_t my_handle;
+            nvs_open("storage", NVS_READWRITE, &my_handle);
+            nvs_set_str(my_handle, "wifi_ssid", ssid_item->valuestring);
+            nvs_set_str(my_handle, "wifi_pass", pass_item->valuestring);
+            nvs_commit(my_handle);
+            nvs_close(my_handle);
+            ESP_LOGI(TAG, "Saved SSID: %s", ssid_item->valuestring);
+            
+            httpd_resp_sendstr(req, "OK");
+            xTaskCreate(delayed_reboot_task, "reboot_task", 2048, NULL, 5, NULL);
+        }
         cJSON_Delete(json);
-        httpd_resp_sendstr(req, "OK");
-        xTaskCreate(delayed_reboot_task, "reboot_task", 2048, NULL, 5, NULL);
     }
     return ESP_OK;
 }
@@ -557,43 +583,47 @@ static esp_err_t save_post_handler(httpd_req_t *req) {
 static esp_err_t servo_post_handler(httpd_req_t *req) {
     char buf[128];
     int ret, remaining = req->content_len;
-    size_t recv_len = (remaining < (int)sizeof(buf)) ? remaining : (int)sizeof(buf);
+    size_t recv_len = (remaining < (int)(sizeof(buf) - 1)) ? remaining : (int)(sizeof(buf) - 1);
     if ((ret = httpd_req_recv(req, buf, recv_len)) <= 0) return ESP_FAIL;
     buf[ret] = '\0';
 
     cJSON *json = cJSON_Parse(buf);
     if (json) {
-        const char *id = cJSON_GetObjectItem(json, "id")->valuestring;
-        int32_t angle = cJSON_GetObjectItem(json, "angle")->valueint;
+        cJSON *id_item = cJSON_GetObjectItem(json, "id");
+        cJSON *angle_item = cJSON_GetObjectItem(json, "angle");
         
-        if (strcmp(id, "low_left") == 0) {
-            target_low_left = angle;
-            write_servo_calibrated(SERVO_LOW_LEFT_CH, target_low_left, offset_low_left);
-        } else if (strcmp(id, "high_right") == 0) {
-            target_high_right = angle;
-            write_servo_calibrated(SERVO_HIGH_RIGHT_CH, target_high_right, offset_high_right);
-        } else if (strcmp(id, "high_left") == 0) {
-            target_high_left = angle;
-            write_servo_calibrated(SERVO_HIGH_LEFT_CH, target_high_left, offset_high_left);
-        } else if (strcmp(id, "low_right") == 0) {
-            target_low_right = angle;
-            write_servo_calibrated(SERVO_LOW_RIGHT_CH, target_low_right, offset_low_right);
-        } else if (strcmp(id, "all") == 0) {
-            target_low_left = angle; target_high_right = angle; target_high_left = angle; target_low_right = angle;
-            write_servo_calibrated(SERVO_LOW_LEFT_CH, target_low_left, offset_low_left);
-            write_servo_calibrated(SERVO_HIGH_RIGHT_CH, target_high_right, offset_high_right);
-            write_servo_calibrated(SERVO_HIGH_LEFT_CH, target_high_left, offset_high_left);
-            write_servo_calibrated(SERVO_LOW_RIGHT_CH, target_low_right, offset_low_right);
-        } else if (strcmp(id, "front") == 0) {
-            target_high_left = angle; target_high_right = angle;
-            write_servo_calibrated(SERVO_HIGH_RIGHT_CH, target_high_right, offset_high_right);
-            write_servo_calibrated(SERVO_HIGH_LEFT_CH, target_high_left, offset_high_left);
-        } else if (strcmp(id, "back") == 0) {
-            target_low_left = angle; target_low_right = angle;
-            write_servo_calibrated(SERVO_LOW_LEFT_CH, target_low_left, offset_low_left);
-            write_servo_calibrated(SERVO_LOW_RIGHT_CH, target_low_right, offset_low_right);
+        if (id_item && id_item->valuestring && angle_item) {
+            const char *id = id_item->valuestring;
+            int32_t angle = angle_item->valueint;
+            
+            if (strcmp(id, "low_left") == 0) {
+                target_low_left = angle;
+                write_servo_calibrated(SERVO_LOW_LEFT_CH, target_low_left, offset_low_left);
+            } else if (strcmp(id, "high_right") == 0) {
+                target_high_right = angle;
+                write_servo_calibrated(SERVO_HIGH_RIGHT_CH, target_high_right, offset_high_right);
+            } else if (strcmp(id, "high_left") == 0) {
+                target_high_left = angle;
+                write_servo_calibrated(SERVO_HIGH_LEFT_CH, target_high_left, offset_high_left);
+            } else if (strcmp(id, "low_right") == 0) {
+                target_low_right = angle;
+                write_servo_calibrated(SERVO_LOW_RIGHT_CH, target_low_right, offset_low_right);
+            } else if (strcmp(id, "all") == 0) {
+                target_low_left = angle; target_high_right = angle; target_high_left = angle; target_low_right = angle;
+                write_servo_calibrated(SERVO_LOW_LEFT_CH, target_low_left, offset_low_left);
+                write_servo_calibrated(SERVO_HIGH_RIGHT_CH, target_high_right, offset_high_right);
+                write_servo_calibrated(SERVO_HIGH_LEFT_CH, target_high_left, offset_high_left);
+                write_servo_calibrated(SERVO_LOW_RIGHT_CH, target_low_right, offset_low_right);
+            } else if (strcmp(id, "front") == 0) {
+                target_high_left = angle; target_high_right = angle;
+                write_servo_calibrated(SERVO_HIGH_RIGHT_CH, target_high_right, offset_high_right);
+                write_servo_calibrated(SERVO_HIGH_LEFT_CH, target_high_left, offset_high_left);
+            } else if (strcmp(id, "back") == 0) {
+                target_low_left = angle; target_low_right = angle;
+                write_servo_calibrated(SERVO_LOW_LEFT_CH, target_low_left, offset_low_left);
+                write_servo_calibrated(SERVO_LOW_RIGHT_CH, target_low_right, offset_low_right);
+            }
         }
-        
         cJSON_Delete(json);
         httpd_resp_sendstr(req, "OK");
     }
@@ -603,17 +633,27 @@ static esp_err_t servo_post_handler(httpd_req_t *req) {
 static esp_err_t calibrate_post_handler(httpd_req_t *req) {
     char buf[200];
     int ret, remaining = req->content_len;
-    size_t recv_len = (remaining < (int)sizeof(buf)) ? remaining : (int)sizeof(buf);
+    size_t recv_len = (remaining < (int)(sizeof(buf) - 1)) ? remaining : (int)(sizeof(buf) - 1);
     if ((ret = httpd_req_recv(req, buf, recv_len)) <= 0) return ESP_FAIL;
     buf[ret] = '\0';
 
     cJSON *json = cJSON_Parse(buf);
     if (json) {
-        offset_low_left   = cJSON_GetObjectItem(json, "low_left")->valueint;
-        offset_high_right = cJSON_GetObjectItem(json, "high_right")->valueint;
-        offset_high_left  = cJSON_GetObjectItem(json, "high_left")->valueint;
-        offset_low_right  = cJSON_GetObjectItem(json, "low_right")->valueint;
-        bool save_to_nvs  = cJSON_HasObjectItem(json, "save") ? cJSON_GetObjectItem(json, "save")->valueint : false;
+        cJSON *ll_item = cJSON_GetObjectItem(json, "low_left");
+        cJSON *hr_item = cJSON_GetObjectItem(json, "high_right");
+        cJSON *hl_item = cJSON_GetObjectItem(json, "high_left");
+        cJSON *lr_item = cJSON_GetObjectItem(json, "low_right");
+        cJSON *sv_item = cJSON_GetObjectItem(json, "save");
+
+        if (ll_item) offset_low_left = ll_item->valueint;
+        if (hr_item) offset_high_right = hr_item->valueint;
+        if (hl_item) offset_high_left = hl_item->valueint;
+        if (lr_item) offset_low_right = lr_item->valueint;
+
+        bool save_to_nvs = false;
+        if (sv_item) {
+            save_to_nvs = cJSON_IsTrue(sv_item) || (sv_item->valueint != 0);
+        }
 
         // Apply calibrated offset adjustments immediately
         write_servo_calibrated(SERVO_LOW_LEFT_CH, target_low_left, offset_low_left);
@@ -627,6 +667,42 @@ static esp_err_t calibrate_post_handler(httpd_req_t *req) {
 
         cJSON_Delete(json);
         httpd_resp_sendstr(req, "OK");
+    }
+    return ESP_OK;
+}
+
+// Handler for UI to submit the Sensor toggles over the network
+static esp_err_t sensor_post_handler(httpd_req_t *req) {
+    char buf[128];
+    int ret, remaining = req->content_len;
+    size_t recv_len = (remaining < (int)(sizeof(buf) - 1)) ? remaining : (int)(sizeof(buf) - 1);
+    if ((ret = httpd_req_recv(req, buf, recv_len)) <= 0) return ESP_FAIL;
+    buf[ret] = '\0';
+
+    cJSON *json = cJSON_Parse(buf);
+    if (json) {
+        cJSON *en_item = cJSON_GetObjectItem(json, "enabled");
+        if (en_item) {
+            sensor_enabled = cJSON_IsTrue(en_item) || (en_item->valueint != 0);
+        }
+        
+        cJSON *th_item = cJSON_GetObjectItem(json, "threshold");
+        if (th_item) {
+            distance_threshold = th_item->valueint;
+        }
+
+        nvs_handle_t my_handle;
+        if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
+            nvs_set_u8(my_handle, "sens_en", sensor_enabled ? 1 : 0);
+            nvs_set_i32(my_handle, "sens_thresh", distance_threshold);
+            nvs_commit(my_handle);
+            nvs_close(my_handle);
+        }
+
+        cJSON_Delete(json);
+        httpd_resp_sendstr(req, "OK");
+    } else {
+        httpd_resp_send_500(req);
     }
     return ESP_OK;
 }
@@ -654,6 +730,11 @@ static esp_err_t angles_get_handler(httpd_req_t *req) {
     cJSON_AddNumberToObject(lr, "offset", offset_low_right);
     cJSON_AddItemToObject(root, "low_right", lr);
 
+    // Added distance sensor output tracking parameters for the web UI polling sequence 
+    cJSON_AddBoolToObject(root, "sensor_enabled", sensor_enabled);
+    cJSON_AddNumberToObject(root, "sensor_distance", current_distance);
+    cJSON_AddNumberToObject(root, "sensor_threshold", distance_threshold);
+
     char *json_str = cJSON_PrintUnformatted(root);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, json_str, strlen(json_str));
@@ -667,15 +748,16 @@ void start_control_server() {
     if (server == NULL) {
         httpd_config_t config = HTTPD_DEFAULT_CONFIG();
         // Set maximum payload sizes to accommodate calibration files or scans
-        config.max_uri_handlers = 8;
+        config.max_uri_handlers = 12; // Raised to easily handle new sensor APIs
         
         if (httpd_start(&server, &config) == ESP_OK) {
-            httpd_uri_t uri_index = { .uri = "/", .method = HTTP_GET, .handler = index_get_handler, .user_ctx = NULL };
-            httpd_uri_t uri_scan  = { .uri = "/scan", .method = HTTP_GET, .handler = scan_get_handler, .user_ctx = NULL };
-            httpd_uri_t uri_save  = { .uri = "/save", .method = HTTP_POST, .handler = save_post_handler, .user_ctx = NULL };
-            httpd_uri_t uri_servo = { .uri = "/servo", .method = HTTP_POST, .handler = servo_post_handler, .user_ctx = NULL };
-            httpd_uri_t uri_cal   = { .uri = "/calibrate", .method = HTTP_POST, .handler = calibrate_post_handler, .user_ctx = NULL };
-            httpd_uri_t uri_angs  = { .uri = "/angles", .method = HTTP_GET, .handler = angles_get_handler, .user_ctx = NULL };
+            httpd_uri_t uri_index  = { .uri = "/", .method = HTTP_GET, .handler = index_get_handler, .user_ctx = NULL };
+            httpd_uri_t uri_scan   = { .uri = "/scan", .method = HTTP_GET, .handler = scan_get_handler, .user_ctx = NULL };
+            httpd_uri_t uri_save   = { .uri = "/save", .method = HTTP_POST, .handler = save_post_handler, .user_ctx = NULL };
+            httpd_uri_t uri_servo  = { .uri = "/servo", .method = HTTP_POST, .handler = servo_post_handler, .user_ctx = NULL };
+            httpd_uri_t uri_cal    = { .uri = "/calibrate", .method = HTTP_POST, .handler = calibrate_post_handler, .user_ctx = NULL };
+            httpd_uri_t uri_angs   = { .uri = "/angles", .method = HTTP_GET, .handler = angles_get_handler, .user_ctx = NULL };
+            httpd_uri_t uri_sensor = { .uri = "/sensor", .method = HTTP_POST, .handler = sensor_post_handler, .user_ctx = NULL };
             
             httpd_register_uri_handler(server, &uri_index);
             httpd_register_uri_handler(server, &uri_scan);
@@ -683,6 +765,7 @@ void start_control_server() {
             httpd_register_uri_handler(server, &uri_servo);
             httpd_register_uri_handler(server, &uri_cal);
             httpd_register_uri_handler(server, &uri_angs);
+            httpd_register_uri_handler(server, &uri_sensor); // Registered! 
             
             ESP_LOGI(TAG, "Dashboard Server initialized successfully on port %d", config.server_port);
         }
@@ -715,6 +798,9 @@ extern "C" void app_main(void) {
 
     // Start the REPL Listener Task so Host PC writes do not time out
     xTaskCreate(console_read_task, "console_read_task", 4096, NULL, 5, NULL);
+    
+    // Start the safety task to ensure background pinging works natively
+    xTaskCreate(ultrasonic_safety_task, "ultrasonic_safety_task", 4096, NULL, 5, NULL);
 
     // Configure both station and AP Mode config profiles
     wifi_config_t ap_config = {};
