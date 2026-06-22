@@ -3,6 +3,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_netif.h"
 #include "esp_wifi.h"
 #include "nvs.h"
 #include "cJSON.h"
@@ -10,6 +11,10 @@
 static const char *TAG = "WIFI_MGR";
 
 void wifi_manager_init() {
+    // Create underlying default Wi-Fi network interfaces
+    esp_netif_create_default_wifi_sta();
+    esp_netif_create_default_wifi_ap();
+
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 

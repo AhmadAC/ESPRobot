@@ -122,6 +122,7 @@ void servo_controller_init() {
     
     // Start animation loop thread
     xTaskCreate(servo_animation_task, "anim_task", 4096, NULL, 5, NULL);
+    ESP_LOGI(TAG, "Hardware PWM and Action Task Initialized");
 }
 
 void servo_set_target(const char* id, int angle) {
