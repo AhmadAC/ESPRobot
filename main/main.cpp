@@ -163,6 +163,7 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
 <!DOCTYPE html>
 <html>
 <head>
+    <meta charset="UTF-8">
     <title>ESPRobot Dashboard</title>
     <meta name='viewport' content='width=device-width, initial-scale=1'>
     <style>
@@ -192,7 +193,7 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
 
     <!-- Wi-Fi Settings -->
     <div class='card'>
-        <h2>🌐 Wi-Fi Provisioning</h2>
+        <h2>Wi-Fi Provisioning</h2>
         <div class='grid'>
             <div>
                 <button onclick='scan()'>Scan Wi-Fi Networks</button>
@@ -214,22 +215,22 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
 
     <!-- Active Robot Servo Control -->
     <div class='card'>
-        <h2>🤖 Servo Kinematics Control</h2>
+        <h2>Servo Kinematics Control</h2>
         <div class='grid'>
             <div class='ctrl-group'>
-                <div class='ctrl-header'><span>Low Left Leg (IO12)</span><span id='val_low_left'>90°</span></div>
+                <div class='ctrl-header'><span>Low Left Leg (IO12)</span><span id='val_low_left'>90&deg;</span></div>
                 <input type='range' id='low_left' min='0' max='180' value='90' oninput='moveServo("low_left", this.value)'>
             </div>
             <div class='ctrl-group'>
-                <div class='ctrl-header'><span>High Right Shoulder (IO10)</span><span id='val_high_right'>90°</span></div>
+                <div class='ctrl-header'><span>High Right Shoulder (IO10)</span><span id='val_high_right'>90&deg;</span></div>
                 <input type='range' id='high_right' min='0' max='180' value='90' oninput='moveServo("high_right", this.value)'>
             </div>
             <div class='ctrl-group'>
-                <div class='ctrl-header'><span>High Left Shoulder (IO11)</span><span id='val_high_left'>90°</span></div>
+                <div class='ctrl-header'><span>High Left Shoulder (IO11)</span><span id='val_high_left'>90&deg;</span></div>
                 <input type='range' id='high_left' min='0' max='180' value='90' oninput='moveServo("high_left", this.value)'>
             </div>
             <div class='ctrl-group'>
-                <div class='ctrl-header'><span>Low Right Leg (IO9)</span><span id='val_low_right'>90°</span></div>
+                <div class='ctrl-header'><span>Low Right Leg (IO9)</span><span id='val_low_right'>90&deg;</span></div>
                 <input type='range' id='low_right' min='0' max='180' value='90' oninput='moveServo("low_right", this.value)'>
             </div>
         </div>
@@ -237,15 +238,15 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         <h3 style='margin-top:25px;'>Group Synchronized Control</h3>
         <div class='grid'>
             <div class='ctrl-group' style='border-left-color: #f1c40f;'>
-                <div class='ctrl-header'><span>All Leg Motors (Combined)</span><span id='val_all'>90°</span></div>
+                <div class='ctrl-header'><span>All Leg Motors (Combined)</span><span id='val_all'>90&deg;</span></div>
                 <input type='range' id='all' min='0' max='180' value='90' oninput='moveServo("all", this.value)'>
             </div>
             <div class='ctrl-group' style='border-left-color: #2ecc71;'>
-                <div class='ctrl-header'><span>Front Pairs (High Left & Right)</span><span id='val_front'>90°</span></div>
+                <div class='ctrl-header'><span>Front Pairs (High Left & Right)</span><span id='val_front'>90&deg;</span></div>
                 <input type='range' id='front' min='0' max='180' value='90' oninput='moveServo("front", this.value)'>
             </div>
             <div class='ctrl-group' style='border-left-color: #e67e22;'>
-                <div class='ctrl-header'><span>Back Pairs (Low Left & Right)</span><span id='val_back'>90°</span></div>
+                <div class='ctrl-header'><span>Back Pairs (Low Left & Right)</span><span id='val_back'>90&deg;</span></div>
                 <input type='range' id='back' min='0' max='180' value='90' oninput='moveServo("back", this.value)'>
             </div>
         </div>
@@ -253,7 +254,7 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
 
     <!-- Alignment Software Calibration -->
     <div class='card'>
-        <h2>🛠️ Software Calibration (NVS Saved Offsets)</h2>
+        <h2>Software Calibration (NVS Saved Offsets)</h2>
         <p><small style='color: #7f8c8d;'>Compensate for misalignment during leg linkage assembly here. Offset value is applied directly on top of the sweep commands.</small></p>
         <div class='grid'>
             <div>
@@ -295,10 +296,23 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
     }
 
     function moveServo(id, angle) {
-        document.getElementById('val_' + id).innerText = angle + '°';
+        document.getElementById('val_' + id).innerHTML = angle + '&deg;';
         fetch('/servo', {
             method: 'POST',
             body: JSON.stringify({id: id, angle: parseInt(angle)})
+        });
+    }
+
+    // Pull current system configurations on document load
+    window.onload = function() {
+        fetch('/angles').then(r => r.json()).then(data => {
+            // Populate Sliders
+            for (let [leg, stats] of Object.entries(data)) {
+                let el = document.getElementById(leg);
+                if(el) { el.value = stats.angle; document.getElementById('val_' + leg).innerHTML = stats.angle + '&deg;'; }
+                let offEl = document.getElementById('off_' + leg);
+                if(offEl) { offEl.value = stats.offset; }
+            }
         });
     }
 
@@ -324,19 +338,6 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
             method: 'POST',
             body: JSON.stringify({low_left: ll, high_right: hr, high_left: hl, low_right: lr, save: true})
         }).then(() => { alert('Calibration parameters written securely to Flash NVS.'); });
-    }
-
-    // Pull current system configurations on document load
-    window.onload = function() {
-        fetch('/angles').then(r => r.json()).then(data => {
-            // Populate Sliders
-            for (let [leg, stats] of Object.entries(data)) {
-                let el = document.getElementById(leg);
-                if(el) { el.value = stats.angle; document.getElementById('val_' + leg).innerText = stats.angle + '°'; }
-                let offEl = document.getElementById('off_' + leg);
-                if(offEl) { offEl.value = stats.offset; }
-            }
-        });
     }
 </script>
 </body>
