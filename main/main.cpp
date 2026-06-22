@@ -1,5 +1,7 @@
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs_flash.h"
@@ -106,6 +108,47 @@ void load_offsets_from_nvs() {
         nvs_close(my_handle);
         ESP_LOGI(TAG, "Loaded Offsets: LL=%ld, HR=%ld, HL=%ld, LR=%ld", 
                  offset_low_left, offset_high_right, offset_high_left, offset_low_right);
+    }
+}
+
+// --- Native USB REPL / Debug Listener Task ---
+void console_read_task(void *pvParameter) {
+    ESP_LOGI("REPL", "USB CDC REPL Listener Started.");
+    
+    // Set standard input to non-blocking mode so it doesn't freeze the task
+    int fd = fileno(stdin);
+    int flags = fcntl(fd, F_GETFL);
+    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+    uint8_t buf[64];
+    while (1) {
+        int len = read(fd, buf, sizeof(buf));
+        if (len > 0) {
+            for (int i = 0; i < len; i++) {
+                if (buf[i] == 0x03) { // Ctrl+C
+                    ESP_LOGW("REPL", "--> [Interrupt] Ctrl+C received!");
+                    ESP_LOGW("REPL", "--> Halting and centering all servos.");
+                    
+                    target_low_left = 90; target_high_right = 90;
+                    target_high_left = 90; target_low_right = 90;
+                    
+                    write_servo_calibrated(SERVO_LOW_LEFT_CH, target_low_left, offset_low_left);
+                    write_servo_calibrated(SERVO_HIGH_RIGHT_CH, target_high_right, offset_high_right);
+                    write_servo_calibrated(SERVO_HIGH_LEFT_CH, target_high_left, offset_high_left);
+                    write_servo_calibrated(SERVO_LOW_RIGHT_CH, target_low_right, offset_low_right);
+
+                } else if (buf[i] == 0x04) { // Ctrl+D
+                    ESP_LOGW("REPL", "--> [Soft Reset] Ctrl+D received! Rebooting in 1 second...");
+                    vTaskDelay(pdMS_TO_TICKS(1000));
+                    esp_restart();
+                } else if (buf[i] >= 32 && buf[i] <= 126) {
+                    // Echo standard characters back for debug visibility
+                    ESP_LOGI("REPL", "--> Received byte: '%c' (0x%02X)", buf[i], buf[i]);
+                }
+            }
+        }
+        // Poll every 20ms
+        vTaskDelay(pdMS_TO_TICKS(20));
     }
 }
 
@@ -510,6 +553,9 @@ extern "C" void app_main(void) {
 
     // Initialize Servo Hardware
     init_servos();
+
+    // Start the REPL Listener Task so Host PC writes do not time out
+    xTaskCreate(console_read_task, "console_read_task", 4096, NULL, 5, NULL);
 
     // Configure both station and AP Mode config profiles
     wifi_config_t ap_config = {};
