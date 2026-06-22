@@ -53,22 +53,43 @@ void wifi_manager_init() {
 }
 
 char* wifi_scan_networks_json() {
+    // Disconnect from active background STA connects to avoid lockup errors (ESP_ERR_WIFI_BUSY)
+    esp_wifi_disconnect();
+    vTaskDelay(pdMS_TO_TICKS(100));
+
     esp_wifi_scan_stop();
     wifi_scan_config_t scan_config = {};
-    esp_wifi_scan_start(&scan_config, true);
+    scan_config.show_hidden = true;
     
-    uint16_t ap_count = 0;
-    esp_wifi_scan_get_ap_num(&ap_count);
-    wifi_ap_record_t *ap_info = (wifi_ap_record_t *)malloc(sizeof(wifi_ap_record_t) * ap_count);
-    esp_wifi_scan_get_ap_records(&ap_count, ap_info);
-
     cJSON *root = cJSON_CreateArray();
-    for(int i = 0; i < ap_count; i++) {
-        cJSON_AddItemToArray(root, cJSON_CreateString((char*)ap_info[i].ssid));
-    }
-    char* json_str = cJSON_PrintUnformatted(root);
+    esp_err_t scan_err = esp_wifi_scan_start(&scan_config, true);
     
-    free(ap_info); 
+    if (scan_err == ESP_OK) {
+        uint16_t ap_count = 0;
+        esp_wifi_scan_get_ap_num(&ap_count);
+        
+        if (ap_count > 0) {
+            // Cap count at a safe maximum value to prevent stack overflows
+            if (ap_count > 30) {
+                ap_count = 30;
+            }
+            wifi_ap_record_t *ap_info = (wifi_ap_record_t *)malloc(sizeof(wifi_ap_record_t) * ap_count);
+            if (ap_info != NULL) {
+                if (esp_wifi_scan_get_ap_records(&ap_count, ap_info) == ESP_OK) {
+                    for(int i = 0; i < ap_count; i++) {
+                        if (strlen((char*)ap_info[i].ssid) > 0) {
+                            cJSON_AddItemToArray(root, cJSON_CreateString((char*)ap_info[i].ssid));
+                        }
+                    }
+                }
+                free(ap_info);
+            }
+        }
+    } else {
+        ESP_LOGE(TAG, "Wi-Fi Scan failed to start: %s", esp_err_to_name(scan_err));
+    }
+    
+    char* json_str = cJSON_PrintUnformatted(root);
     cJSON_Delete(root); 
     return json_str;
 }
