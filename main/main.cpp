@@ -19,11 +19,12 @@
 
 static const char *TAG = "ESPROBOT";
 httpd_handle_t server = NULL;
+
 //Low Left Leg: Connect to GPIO 12 (marked as 12 or IO12)
 //High Left Shoulder: Connect to GPIO 11 (marked as 11 or IO11)
 //High Right Shoulder: Connect to GPIO 10 (marked as 10 or IO10)
 //Low Right Leg: Connect to GPIO 9 (marked as 9 or IO9)
-// --- Servo Pin Definitions ---
+// --- Pin Definitions ---
 #define SERVO_LOW_LEFT_PIN   GPIO_NUM_12 // CH0
 #define SERVO_HIGH_RIGHT_PIN GPIO_NUM_10 // CH1
 #define SERVO_HIGH_LEFT_PIN  GPIO_NUM_11 // CH2
@@ -119,9 +120,16 @@ void load_offsets_from_nvs() {
         nvs_get_i32(my_handle, "hr_off", &offset_high_right);
         nvs_get_i32(my_handle, "hl_off", &offset_high_left);
         nvs_get_i32(my_handle, "lr_off", &offset_low_right);
+        
+        // Load saved ultrasonic parameters on boot
+        uint8_t sens_en_val = 1;
+        nvs_get_u8(my_handle, "sens_en", &sens_en_val);
+        sensor_enabled = (sens_en_val == 1);
+        nvs_get_i32(my_handle, "sens_thresh", &distance_threshold);
+
         nvs_close(my_handle);
-        ESP_LOGI(TAG, "Loaded Offsets: LL=%ld, HR=%ld, HL=%ld, LR=%ld", 
-                 offset_low_left, offset_high_right, offset_high_left, offset_low_right);
+        ESP_LOGI(TAG, "Loaded Offsets: LL=%ld, HR=%ld, HL=%ld, LR=%ld, SensorEn=%d, Thresh=%ldcm", 
+                 offset_low_left, offset_high_right, offset_high_left, offset_low_right, sensor_enabled, distance_threshold);
     }
 }
 
