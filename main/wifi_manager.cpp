@@ -110,13 +110,6 @@ void wifi_manager_init() {
     
     // Explicitly mirror the old working code: Start Wi-Fi FIRST before connecting
     ESP_ERROR_CHECK(esp_wifi_start());
-    
-    // =========================================================================
-    // FIX: Force Wi-Fi to Maximum Performance Mode (Disable Power Save)
-    // This stops the antenna from sleeping, preventing dropped auth frames 
-    // on weak connections and eliminating Web Server TCP "send : 11" bottlenecks.
-    // =========================================================================
-    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
 
     if (has_creds) {
         ESP_LOGI(TAG, "Connecting to saved network: %s", ssid);
@@ -126,7 +119,14 @@ void wifi_manager_init() {
         strncpy((char*)sta_config.sta.ssid, ssid, 32);
         strncpy((char*)sta_config.sta.password, pass, 64);
         
+        // =========================================================================
+        // FRINGE SIGNAL MITIGATION (For -85dBm and weaker networks)
+        // 1. Tell the router we might miss up to 5 network pulses so it doesn't kick us
+        // 2. Command the internal amplifier to broadcast at absolute maximum (21 dBm)
+        // =========================================================================
+        sta_config.sta.listen_interval = 5; 
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_config));
+        esp_wifi_set_max_tx_power(84); // 84 * 0.25dBm = 21dBm Max Output
         
         disconnect_time = esp_timer_get_time(); // Start the 300s failure countdown
         esp_wifi_connect();
