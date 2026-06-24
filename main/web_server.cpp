@@ -91,19 +91,23 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         <div class='grid'>
             <div class='ctrl-group'>
                 <div class='ctrl-header'><span>Low Left Leg (IO12)</span><span id='val_low_left'>90&deg;</span></div>
-                <input type='range' class='srv-slider' id='low_left' min='0' max='180' value='90' oninput='moveServo("low_left", this.value)'>
+                <input type='range' class='srv-slider' id='low_left' min='0' max='180' value='90' 
+                       oninput='moveServo("low_left", this.value)' onmousedown='dragStart("low_left")' onmouseup='dragEnd()' ontouchstart='dragStart("low_left")' ontouchend='dragEnd()'>
             </div>
             <div class='ctrl-group'>
                 <div class='ctrl-header'><span>High Right Shoulder (IO10)</span><span id='val_high_right'>90&deg;</span></div>
-                <input type='range' class='srv-slider' id='high_right' min='0' max='180' value='90' oninput='moveServo("high_right", this.value)'>
+                <input type='range' class='srv-slider' id='high_right' min='0' max='180' value='90' 
+                       oninput='moveServo("high_right", this.value)' onmousedown='dragStart("high_right")' onmouseup='dragEnd()' ontouchstart='dragStart("high_right")' ontouchend='dragEnd()'>
             </div>
             <div class='ctrl-group'>
                 <div class='ctrl-header'><span>High Left Shoulder (IO11)</span><span id='val_high_left'>90&deg;</span></div>
-                <input type='range' class='srv-slider' id='high_left' min='0' max='180' value='90' oninput='moveServo("high_left", this.value)'>
+                <input type='range' class='srv-slider' id='high_left' min='0' max='180' value='90' 
+                       oninput='moveServo("high_left", this.value)' onmousedown='dragStart("high_left")' onmouseup='dragEnd()' ontouchstart='dragStart("high_left")' ontouchend='dragEnd()'>
             </div>
             <div class='ctrl-group'>
                 <div class='ctrl-header'><span>Low Right Leg (IO9)</span><span id='val_low_right'>90&deg;</span></div>
-                <input type='range' class='srv-slider' id='low_right' min='0' max='180' value='90' oninput='moveServo("low_right", this.value)'>
+                <input type='range' class='srv-slider' id='low_right' min='0' max='180' value='90' 
+                       oninput='moveServo("low_right", this.value)' onmousedown='dragStart("low_right")' onmouseup='dragEnd()' ontouchstart='dragStart("low_right")' ontouchend='dragEnd()'>
             </div>
         </div>
     </div>
@@ -171,6 +175,18 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
     let localSensorEnabled = false; 
     let servoTimeouts = {}; 
     let allCalibrations = {};
+    let activeDrag = null;
+
+    function fetchJSON(url, bodyData) {
+        return fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(bodyData)
+        });
+    }
+
+    function dragStart(id) { activeDrag = id; }
+    function dragEnd() { activeDrag = null; }
 
     function fetchCalibrations() {
         fetch('/calibrations_json').then(r => r.json()).then(data => {
@@ -191,36 +207,32 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
 
     function testCalib() {
         let tgt = document.getElementById('calib_target').value;
-        let p = {
+        fetchJSON('/calibrate', {
             target: tgt,
             ll: parseInt(document.getElementById('cal_ll').value) || 0,
             hr: parseInt(document.getElementById('cal_hr').value) || 0,
             hl: parseInt(document.getElementById('cal_hl').value) || 0,
             lr: parseInt(document.getElementById('cal_lr').value) || 0,
             save: false
-        };
-        fetch('/calibrate', { method: 'POST', body: JSON.stringify(p) });
+        });
     }
 
     function saveCalib() {
         let tgt = document.getElementById('calib_target').value;
-        let p = {
+        fetchJSON('/calibrate', {
             target: tgt,
             ll: parseInt(document.getElementById('cal_ll').value) || 0,
             hr: parseInt(document.getElementById('cal_hr').value) || 0,
             hl: parseInt(document.getElementById('cal_hl').value) || 0,
             lr: parseInt(document.getElementById('cal_lr').value) || 0,
             save: true
-        };
-        fetch('/calibrate', { method: 'POST', body: JSON.stringify(p) }).then(()=> {
+        }).then(()=> {
             alert('Calibration Updated & Saved to ESP32 Storage!');
             fetchCalibrations();
         });
     }
 
-    function downloadCalib() {
-        window.location.href = '/download_cal';
-    }
+    function downloadCalib() { window.location.href = '/download_cal'; }
 
     function scan() {
         document.getElementById('status').innerText = 'Scanning Wi-Fi...';
@@ -236,20 +248,19 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         let s = document.getElementById('ssid').value;
         let p = document.getElementById('pass').value;
         if(!s) return;
-        fetch('/save', { method: 'POST', body: JSON.stringify({ssid: s, pass: p}) })
-        .then(() => alert('Saved. Rebooting.'));
+        fetchJSON('/save', {ssid: s, pass: p}).then(() => alert('Saved. Rebooting.'));
     }
 
     function doAction(act) {
-        fetch('/action', { method: 'POST', body: JSON.stringify({action: act}) });
+        fetchJSON('/action', {action: act});
     }
 
     function moveServo(id, angle) {
         document.getElementById('val_' + id).innerHTML = angle + '&deg;';
         clearTimeout(servoTimeouts[id]);
         servoTimeouts[id] = setTimeout(() => {
-            fetch('/servo', { method: 'POST', body: JSON.stringify({id: id, angle: parseInt(angle)}) });
-        }, 40); 
+            fetchJSON('/servo', {id: id, angle: parseInt(angle)});
+        }, 150); 
     }
 
     function toggleSensor() {
@@ -264,7 +275,7 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
 
     function sendSensorConfig() {
         let thresh = parseInt(document.getElementById('threshold').value) || 20;
-        fetch('/sensor', { method: 'POST', body: JSON.stringify({enabled: localSensorEnabled, threshold: thresh}) });
+        fetchJSON('/sensor', {enabled: localSensorEnabled, threshold: thresh});
     }
 
     function updateStatus() {
@@ -285,8 +296,8 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
             for (let [leg, stats] of Object.entries(data)) {
                 if (typeof stats === 'object') {
                     let el = document.getElementById(leg);
-                    // Live polling animates the sliders if they aren't currently being dragged
-                    if(el && (document.activeElement !== el || data.safety_lock)) { 
+                    // Update slider values ONLY if the user isn't currently dragging them
+                    if(el && (leg !== activeDrag || data.safety_lock)) { 
                         el.value = stats.angle; 
                         document.getElementById('val_' + leg).innerHTML = stats.angle + '&deg;'; 
                     }
@@ -330,6 +341,39 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+// Reusable macro/function to safely ingest POST payloads and prevent socket hanging
+static esp_err_t get_post_json(httpd_req_t *req, cJSON **json_out) {
+    *json_out = NULL;
+    int total_len = req->content_len;
+    if (total_len >= 512 || total_len <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid payload size");
+        return ESP_FAIL;
+    }
+    
+    char* buf = (char*)malloc(total_len + 1);
+    int received = 0;
+    while (received < total_len) {
+        int ret = httpd_req_recv(req, buf + received, total_len - received);
+        if (ret <= 0) {
+            free(buf);
+            if (ret == HTTPD_SOCK_ERR_TIMEOUT) httpd_resp_send_408(req);
+            return ESP_FAIL;
+        }
+        received += ret;
+    }
+    buf[total_len] = '\0';
+    
+    *json_out = cJSON_Parse(buf);
+    free(buf);
+    
+    if (*json_out == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+    return ESP_OK;
+}
+
+
 static esp_err_t scan_get_handler(httpd_req_t *req) {
     char* json_str = wifi_scan_networks_json();
     httpd_resp_set_type(req, "application/json");
@@ -339,35 +383,23 @@ static esp_err_t scan_get_handler(httpd_req_t *req) {
 }
 
 static esp_err_t save_post_handler(httpd_req_t *req) {
-    char buf[200];
-    int ret, remaining = req->content_len;
-    size_t recv_len = (remaining < (int)(sizeof(buf) - 1)) ? remaining : (int)(sizeof(buf) - 1);
-    if ((ret = httpd_req_recv(req, buf, recv_len)) <= 0) return ESP_FAIL;
-    buf[ret] = '\0';
-    
-    cJSON *json = cJSON_Parse(buf);
-    if(json) {
+    cJSON *json = NULL;
+    if (get_post_json(req, &json) == ESP_OK) {
         cJSON *ssid_item = cJSON_GetObjectItem(json, "ssid");
         cJSON *pass_item = cJSON_GetObjectItem(json, "pass");
         if (ssid_item && pass_item) {
             wifi_save_credentials(ssid_item->valuestring, pass_item->valuestring);
-            httpd_resp_sendstr(req, "OK");
             xTaskCreate(delayed_reboot_task, "reboot_task", 2048, NULL, 5, NULL);
         }
         cJSON_Delete(json);
+        httpd_resp_sendstr(req, "OK");
     }
     return ESP_OK;
 }
 
 static esp_err_t servo_post_handler(httpd_req_t *req) {
-    char buf[128];
-    int ret, remaining = req->content_len;
-    size_t recv_len = (remaining < (int)(sizeof(buf) - 1)) ? remaining : (int)(sizeof(buf) - 1);
-    if ((ret = httpd_req_recv(req, buf, recv_len)) <= 0) return ESP_FAIL;
-    buf[ret] = '\0';
-
-    cJSON *json = cJSON_Parse(buf);
-    if (json) {
+    cJSON *json = NULL;
+    if (get_post_json(req, &json) == ESP_OK) {
         cJSON *id_item = cJSON_GetObjectItem(json, "id");
         cJSON *angle_item = cJSON_GetObjectItem(json, "angle");
         if (id_item && angle_item) {
@@ -380,14 +412,8 @@ static esp_err_t servo_post_handler(httpd_req_t *req) {
 }
 
 static esp_err_t action_post_handler(httpd_req_t *req) {
-    char buf[128];
-    int ret, remaining = req->content_len;
-    size_t recv_len = (remaining < (int)(sizeof(buf) - 1)) ? remaining : (int)(sizeof(buf) - 1);
-    if ((ret = httpd_req_recv(req, buf, recv_len)) <= 0) return ESP_FAIL;
-    buf[ret] = '\0';
-
-    cJSON *json = cJSON_Parse(buf);
-    if (json) {
+    cJSON *json = NULL;
+    if (get_post_json(req, &json) == ESP_OK) {
         cJSON *act_item = cJSON_GetObjectItem(json, "action");
         if (act_item) {
             ESP_LOGI(TAG, "UI Triggered Action: %s", act_item->valuestring);
@@ -417,14 +443,8 @@ static esp_err_t download_cal_get_handler(httpd_req_t *req) {
 }
 
 static esp_err_t calibrate_post_handler(httpd_req_t *req) {
-    char buf[200];
-    int ret, remaining = req->content_len;
-    size_t recv_len = (remaining < (int)(sizeof(buf) - 1)) ? remaining : (int)(sizeof(buf) - 1);
-    if ((ret = httpd_req_recv(req, buf, recv_len)) <= 0) return ESP_FAIL;
-    buf[ret] = '\0';
-
-    cJSON *json = cJSON_Parse(buf);
-    if (json) {
+    cJSON *json = NULL;
+    if (get_post_json(req, &json) == ESP_OK) {
         cJSON *tgt_item = cJSON_GetObjectItem(json, "target");
         cJSON *ll_item = cJSON_GetObjectItem(json, "ll");
         cJSON *hr_item = cJSON_GetObjectItem(json, "hr");
@@ -436,7 +456,6 @@ static esp_err_t calibrate_post_handler(httpd_req_t *req) {
             bool save_to_nvs = sv_item ? (cJSON_IsTrue(sv_item) || sv_item->valueint != 0) : false;
             servo_set_calibration(tgt_item->valuestring, ll_item->valueint, hr_item->valueint, hl_item->valueint, lr_item->valueint, save_to_nvs);
         }
-
         cJSON_Delete(json);
         httpd_resp_sendstr(req, "OK");
     }
@@ -444,14 +463,8 @@ static esp_err_t calibrate_post_handler(httpd_req_t *req) {
 }
 
 static esp_err_t sensor_post_handler(httpd_req_t *req) {
-    char buf[128];
-    int ret, remaining = req->content_len;
-    size_t recv_len = (remaining < (int)(sizeof(buf) - 1)) ? remaining : (int)(sizeof(buf) - 1);
-    if ((ret = httpd_req_recv(req, buf, recv_len)) <= 0) return ESP_FAIL;
-    buf[ret] = '\0';
-
-    cJSON *json = cJSON_Parse(buf);
-    if (json) {
+    cJSON *json = NULL;
+    if (get_post_json(req, &json) == ESP_OK) {
         cJSON *en_item = cJSON_GetObjectItem(json, "enabled");
         if (en_item) {
             sensor_set_enabled(cJSON_IsTrue(en_item) || (en_item->valueint != 0));
@@ -460,14 +473,8 @@ static esp_err_t sensor_post_handler(httpd_req_t *req) {
         if (th_item) {
             sensor_set_threshold(th_item->valueint);
         }
-
-        ESP_LOGI(TAG, "Web UI Updated Sensor -> Enabled: %s, Threshold: %ldcm", 
-                 sensor_is_enabled() ? "YES" : "NO", sensor_get_threshold());
-
         cJSON_Delete(json);
         httpd_resp_sendstr(req, "OK");
-    } else {
-        httpd_resp_send_500(req);
     }
     return ESP_OK;
 }
