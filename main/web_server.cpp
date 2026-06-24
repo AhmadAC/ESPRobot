@@ -91,23 +91,19 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         <div class='grid'>
             <div class='ctrl-group'>
                 <div class='ctrl-header'><span>Low Left Leg (IO12)</span><span id='val_low_left'>90&deg;</span></div>
-                <input type='range' class='srv-slider' id='low_left' min='0' max='180' value='90' 
-                       oninput='moveServo("low_left", this.value)' onmousedown='dragStart("low_left")' onmouseup='dragEnd()' ontouchstart='dragStart("low_left")' ontouchend='dragEnd()'>
+                <input type='range' class='srv-slider' id='low_left' min='0' max='180' value='90' oninput='moveServo("low_left", this.value)'>
             </div>
             <div class='ctrl-group'>
                 <div class='ctrl-header'><span>High Right Shoulder (IO10)</span><span id='val_high_right'>90&deg;</span></div>
-                <input type='range' class='srv-slider' id='high_right' min='0' max='180' value='90' 
-                       oninput='moveServo("high_right", this.value)' onmousedown='dragStart("high_right")' onmouseup='dragEnd()' ontouchstart='dragStart("high_right")' ontouchend='dragEnd()'>
+                <input type='range' class='srv-slider' id='high_right' min='0' max='180' value='90' oninput='moveServo("high_right", this.value)'>
             </div>
             <div class='ctrl-group'>
                 <div class='ctrl-header'><span>High Left Shoulder (IO11)</span><span id='val_high_left'>90&deg;</span></div>
-                <input type='range' class='srv-slider' id='high_left' min='0' max='180' value='90' 
-                       oninput='moveServo("high_left", this.value)' onmousedown='dragStart("high_left")' onmouseup='dragEnd()' ontouchstart='dragStart("high_left")' ontouchend='dragEnd()'>
+                <input type='range' class='srv-slider' id='high_left' min='0' max='180' value='90' oninput='moveServo("high_left", this.value)'>
             </div>
             <div class='ctrl-group'>
                 <div class='ctrl-header'><span>Low Right Leg (IO9)</span><span id='val_low_right'>90&deg;</span></div>
-                <input type='range' class='srv-slider' id='low_right' min='0' max='180' value='90' 
-                       oninput='moveServo("low_right", this.value)' onmousedown='dragStart("low_right")' onmouseup='dragEnd()' ontouchstart='dragStart("low_right")' ontouchend='dragEnd()'>
+                <input type='range' class='srv-slider' id='low_right' min='0' max='180' value='90' oninput='moveServo("low_right", this.value)'>
             </div>
         </div>
     </div>
@@ -373,7 +369,6 @@ static esp_err_t get_post_json(httpd_req_t *req, cJSON **json_out) {
     return ESP_OK;
 }
 
-
 static esp_err_t scan_get_handler(httpd_req_t *req) {
     char* json_str = wifi_scan_networks_json();
     httpd_resp_set_type(req, "application/json");
@@ -510,7 +505,14 @@ static esp_err_t angles_get_handler(httpd_req_t *req) {
 void web_server_init() {
     if (server == NULL) {
         httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+        
+        // Optimize configuration for swift request processing and thread isolation
         config.max_uri_handlers = 12;
+        config.core_id = 1;                             // Restrict the HTTP server strictly to Core 1
+        config.task_priority = 6;                       // Elevate task priority slightly above common applications
+        config.stack_size = 8192;                       // Guarantee stack space for processing JSON inputs safely
+        config.lru_purge_enable = true;                 // Purge stale sockets dynamically to maintain active tunnels
+        config.max_open_sockets = 7;                    // Permit up to 7 concurrent sockets to sustain dashboard polling
         
         if (httpd_start(&server, &config) == ESP_OK) {
             httpd_uri_t uri_index   = { .uri = "/", .method = HTTP_GET, .handler = index_get_handler, .user_ctx = NULL };
