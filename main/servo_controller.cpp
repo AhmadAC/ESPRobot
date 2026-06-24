@@ -31,8 +31,10 @@ static int active_animation = 0; // 0=None, 1=Walk Forward, 2=Walk Back
 
 // =========================================================
 // ESPRobot Calibration Defaults
-// Replace these with the output from your Web Server download
+// Replace the block in servo_controller.cpp with these lines
+// to permanently embed your custom actions into the firmware.
 // =========================================================
+
 static int32_t offset_low_left   = 0;
 static int32_t offset_high_right = 0;
 static int32_t offset_high_left  = 0;
@@ -40,9 +42,9 @@ static int32_t offset_low_right  = 0;
 
 struct Pose { int32_t ll, hr, hl, lr; };
 static Pose poses[5] = {
-    {0, 180, 180, 0},    // sit
-    {0, 0, 0, 0},        // stand
-    {90, 180, 180, 90},  // stretch_down
+    {180, 0, 180, 9},    // sit
+    {90, 90, 90, 90},    // stand
+    {90, 180, 0, 90},    // stretch_down
     {180, 90, 90, 180},  // stretch_back
     {90, 90, 90, 90}     // stop
 };
