@@ -1,3 +1,4 @@
+
 #include "web_server.h"
 #include "wifi_manager.h"
 #include "sensor_monitor.h"
@@ -108,6 +109,47 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
     </div>
 
     <div class='card'>
+        <h2>Pose Calibration & Hardware Zeroing</h2>
+        <div class='grid'>
+            <div class='ctrl-group' style='border-left-color: #e67e22;'>
+                <label>Target to Calibrate:</label>
+                <select id='calib_target' onchange='loadCalibTarget()' style='font-weight:bold; cursor:pointer;'>
+                    <option value='offsets'>1. Hardware Zeroing (Offsets)</option>
+                    <option value='sit'>2. Pose: Sit</option>
+                    <option value='stand'>3. Pose: Stand Up</option>
+                    <option value='stretch_down'>4. Pose: Stretch Down</option>
+                    <option value='stretch_back'>5. Pose: Stretch Back</option>
+                    <option value='stop'>6. Pose: Stop (Default)</option>
+                </select>
+                <p style='font-size: 11px; color: #7f8c8d; margin-top:5px;'>First, use Hardware Zeroing to make all motors physically 90&deg;. Then calibrate your custom limits for the individual buttons.</p>
+            </div>
+            <div class='ctrl-group' style='border-left-color: #34495e; text-align:center;'>
+                <p style='margin-top:0; font-size:13px; font-weight:bold;'>Compile Defaults into Firmware</p>
+                <p style='margin-top:0; font-size:11px; color:#7f8c8d;'>Save your finalized configuration to a C++ file to hardcode the settings securely for your next compile.</p>
+                <button style='background: #34495e; padding: 10px;' onclick='downloadCalib()'>⬇️ Download C++ Configuration</button>
+            </div>
+        </div>
+        <div class='grid' style='margin-top:15px;'>
+            <div>
+                <label>Low Left Motor Limit:</label>
+                <input type='number' id='cal_ll' value='0'>
+                <label>High Right Motor Limit:</label>
+                <input type='number' id='cal_hr' value='0'>
+            </div>
+            <div>
+                <label>High Left Motor Limit:</label>
+                <input type='number' id='cal_hl' value='0'>
+                <label>Low Right Motor Limit:</label>
+                <input type='number' id='cal_lr' value='0'>
+            </div>
+        </div>
+        <div class='grid' style='margin-top:15px;'>
+            <button style='background: #3498db;' onclick='testCalib()'>Test Pose / Offset</button>
+            <button style='background: #e67e22;' onclick='saveCalib()'>Save to Robot NVS Storage</button>
+        </div>
+    </div>
+
+    <div class='card'>
         <h2>Ultrasonic Obstacle Safety Monitor</h2>
         <div class='grid'>
             <div class='ctrl-group' style='border-left-color: #e74c3c;'>
@@ -123,29 +165,62 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         </div>
     </div>
 
-    <div class='card'>
-        <h2>Software Calibration (NVS Saved Offsets)</h2>
-        <div class='grid'>
-            <div>
-                <label>Low Left Offset:</label>
-                <input type='number' id='off_low_left' min='-45' max='45' value='0' onchange='updateOffsets()'>
-                <label>High Right Offset:</label>
-                <input type='number' id='off_high_right' min='-45' max='45' value='0' onchange='updateOffsets()'>
-            </div>
-            <div>
-                <label>High Left Offset:</label>
-                <input type='number' id='off_high_left' min='-45' max='45' value='0' onchange='updateOffsets()'>
-                <label>Low Right Offset:</label>
-                <input type='number' id='off_low_right' min='-45' max='45' value='0' onchange='updateOffsets()'>
-            </div>
-        </div>
-        <button style='background: #e67e22; margin-top:15px;' onclick='saveOffsets()'>Save Calibration to Persistent Memory</button>
-    </div>
 </div>
 
 <script>
     let localSensorEnabled = false; 
     let servoTimeouts = {}; 
+    let allCalibrations = {};
+
+    function fetchCalibrations() {
+        fetch('/calibrations_json').then(r => r.json()).then(data => {
+            allCalibrations = data;
+            loadCalibTarget();
+        });
+    }
+
+    function loadCalibTarget() {
+        let tgt = document.getElementById('calib_target').value;
+        if (allCalibrations[tgt]) {
+            document.getElementById('cal_ll').value = allCalibrations[tgt].ll;
+            document.getElementById('cal_hr').value = allCalibrations[tgt].hr;
+            document.getElementById('cal_hl').value = allCalibrations[tgt].hl;
+            document.getElementById('cal_lr').value = allCalibrations[tgt].lr;
+        }
+    }
+
+    function testCalib() {
+        let tgt = document.getElementById('calib_target').value;
+        let p = {
+            target: tgt,
+            ll: parseInt(document.getElementById('cal_ll').value) || 0,
+            hr: parseInt(document.getElementById('cal_hr').value) || 0,
+            hl: parseInt(document.getElementById('cal_hl').value) || 0,
+            lr: parseInt(document.getElementById('cal_lr').value) || 0,
+            save: false
+        };
+        fetch('/calibrate', { method: 'POST', body: JSON.stringify(p) });
+    }
+
+    function saveCalib() {
+        let tgt = document.getElementById('calib_target').value;
+        let p = {
+            target: tgt,
+            ll: parseInt(document.getElementById('cal_ll').value) || 0,
+            hr: parseInt(document.getElementById('cal_hr').value) || 0,
+            hl: parseInt(document.getElementById('cal_hl').value) || 0,
+            lr: parseInt(document.getElementById('cal_lr').value) || 0,
+            save: true
+        };
+        fetch('/calibrate', { method: 'POST', body: JSON.stringify(p) }).then(()=> {
+            alert('Calibration Updated & Saved to ESP32 Storage!');
+            fetchCalibrations();
+        });
+    }
+
+    function downloadCalib() {
+        window.location.href = '/download_cal';
+    }
 
     function scan() {
         document.getElementById('status').innerText = 'Scanning Wi-Fi...';
@@ -215,10 +290,6 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
                         el.value = stats.angle; 
                         document.getElementById('val_' + leg).innerHTML = stats.angle + '&deg;'; 
                     }
-                    let offEl = document.getElementById('off_' + leg);
-                    if(offEl && document.activeElement !== offEl) { 
-                        offEl.value = stats.offset; 
-                    }
                 }
             }
 
@@ -246,23 +317,10 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         });
     }
 
-    window.onload = function() { updateStatus(); setInterval(updateStatus, 500); }
-
-    function updateOffsets() {
-        let ll = parseInt(document.getElementById('off_low_left').value) || 0;
-        let hr = parseInt(document.getElementById('off_high_right').value) || 0;
-        let hl = parseInt(document.getElementById('off_high_left').value) || 0;
-        let lr = parseInt(document.getElementById('off_low_right').value) || 0;
-        fetch('/calibrate', { method: 'POST', body: JSON.stringify({low_left: ll, high_right: hr, high_left: hl, low_right: lr, save: false}) });
-    }
-
-    function saveOffsets() {
-        let ll = parseInt(document.getElementById('off_low_left').value) || 0;
-        let hr = parseInt(document.getElementById('off_high_right').value) || 0;
-        let hl = parseInt(document.getElementById('off_high_left').value) || 0;
-        let lr = parseInt(document.getElementById('off_low_right').value) || 0;
-        fetch('/calibrate', { method: 'POST', body: JSON.stringify({low_left: ll, high_right: hr, high_left: hl, low_right: lr, save: true}) })
-        .then(() => alert('Calibration Saved.'));
+    window.onload = function() { 
+        updateStatus(); 
+        fetchCalibrations();
+        setInterval(updateStatus, 500); 
     }
 </script>
 </body>
@@ -341,6 +399,23 @@ static esp_err_t action_post_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+static esp_err_t calibrations_json_get_handler(httpd_req_t *req) {
+    char* json_str = servo_get_calibrations_json();
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, json_str, strlen(json_str));
+    free(json_str);
+    return ESP_OK;
+}
+
+static esp_err_t download_cal_get_handler(httpd_req_t *req) {
+    char* cpp_code = servo_get_calibrations_cpp();
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"esprobot_defaults.txt\"");
+    httpd_resp_send(req, cpp_code, strlen(cpp_code));
+    free(cpp_code);
+    return ESP_OK;
+}
+
 static esp_err_t calibrate_post_handler(httpd_req_t *req) {
     char buf[200];
     int ret, remaining = req->content_len;
@@ -350,22 +425,17 @@ static esp_err_t calibrate_post_handler(httpd_req_t *req) {
 
     cJSON *json = cJSON_Parse(buf);
     if (json) {
-        int ll = 0, hr = 0, hl = 0, lr = 0;
-        servo_get_offsets(&ll, &hr, &hl, &lr); // Get current to override below
-
-        cJSON *ll_item = cJSON_GetObjectItem(json, "low_left");
-        cJSON *hr_item = cJSON_GetObjectItem(json, "high_right");
-        cJSON *hl_item = cJSON_GetObjectItem(json, "high_left");
-        cJSON *lr_item = cJSON_GetObjectItem(json, "low_right");
+        cJSON *tgt_item = cJSON_GetObjectItem(json, "target");
+        cJSON *ll_item = cJSON_GetObjectItem(json, "ll");
+        cJSON *hr_item = cJSON_GetObjectItem(json, "hr");
+        cJSON *hl_item = cJSON_GetObjectItem(json, "hl");
+        cJSON *lr_item = cJSON_GetObjectItem(json, "lr");
         cJSON *sv_item = cJSON_GetObjectItem(json, "save");
 
-        if (ll_item) ll = ll_item->valueint;
-        if (hr_item) hr = hr_item->valueint;
-        if (hl_item) hl = hl_item->valueint;
-        if (lr_item) lr = lr_item->valueint;
-
-        bool save_to_nvs = sv_item ? (cJSON_IsTrue(sv_item) || sv_item->valueint != 0) : false;
-        servo_set_offsets(ll, hr, hl, lr, save_to_nvs);
+        if (tgt_item && ll_item && hr_item && hl_item && lr_item) {
+            bool save_to_nvs = sv_item ? (cJSON_IsTrue(sv_item) || sv_item->valueint != 0) : false;
+            servo_set_calibration(tgt_item->valuestring, ll_item->valueint, hr_item->valueint, hl_item->valueint, lr_item->valueint, save_to_nvs);
+        }
 
         cJSON_Delete(json);
         httpd_resp_sendstr(req, "OK");
@@ -436,14 +506,16 @@ void web_server_init() {
         config.max_uri_handlers = 12;
         
         if (httpd_start(&server, &config) == ESP_OK) {
-            httpd_uri_t uri_index  = { .uri = "/", .method = HTTP_GET, .handler = index_get_handler, .user_ctx = NULL };
-            httpd_uri_t uri_scan   = { .uri = "/scan", .method = HTTP_GET, .handler = scan_get_handler, .user_ctx = NULL };
-            httpd_uri_t uri_save   = { .uri = "/save", .method = HTTP_POST, .handler = save_post_handler, .user_ctx = NULL };
-            httpd_uri_t uri_servo  = { .uri = "/servo", .method = HTTP_POST, .handler = servo_post_handler, .user_ctx = NULL };
-            httpd_uri_t uri_act    = { .uri = "/action", .method = HTTP_POST, .handler = action_post_handler, .user_ctx = NULL };
-            httpd_uri_t uri_cal    = { .uri = "/calibrate", .method = HTTP_POST, .handler = calibrate_post_handler, .user_ctx = NULL };
-            httpd_uri_t uri_angs   = { .uri = "/angles", .method = HTTP_GET, .handler = angles_get_handler, .user_ctx = NULL };
-            httpd_uri_t uri_sensor = { .uri = "/sensor", .method = HTTP_POST, .handler = sensor_post_handler, .user_ctx = NULL };
+            httpd_uri_t uri_index   = { .uri = "/", .method = HTTP_GET, .handler = index_get_handler, .user_ctx = NULL };
+            httpd_uri_t uri_scan    = { .uri = "/scan", .method = HTTP_GET, .handler = scan_get_handler, .user_ctx = NULL };
+            httpd_uri_t uri_save    = { .uri = "/save", .method = HTTP_POST, .handler = save_post_handler, .user_ctx = NULL };
+            httpd_uri_t uri_servo   = { .uri = "/servo", .method = HTTP_POST, .handler = servo_post_handler, .user_ctx = NULL };
+            httpd_uri_t uri_act     = { .uri = "/action", .method = HTTP_POST, .handler = action_post_handler, .user_ctx = NULL };
+            httpd_uri_t uri_cal     = { .uri = "/calibrate", .method = HTTP_POST, .handler = calibrate_post_handler, .user_ctx = NULL };
+            httpd_uri_t uri_caljson = { .uri = "/calibrations_json", .method = HTTP_GET, .handler = calibrations_json_get_handler, .user_ctx = NULL };
+            httpd_uri_t uri_dlcal   = { .uri = "/download_cal", .method = HTTP_GET, .handler = download_cal_get_handler, .user_ctx = NULL };
+            httpd_uri_t uri_angs    = { .uri = "/angles", .method = HTTP_GET, .handler = angles_get_handler, .user_ctx = NULL };
+            httpd_uri_t uri_sensor  = { .uri = "/sensor", .method = HTTP_POST, .handler = sensor_post_handler, .user_ctx = NULL };
             
             httpd_register_uri_handler(server, &uri_index);
             httpd_register_uri_handler(server, &uri_scan);
@@ -451,6 +523,8 @@ void web_server_init() {
             httpd_register_uri_handler(server, &uri_servo);
             httpd_register_uri_handler(server, &uri_act);
             httpd_register_uri_handler(server, &uri_cal);
+            httpd_register_uri_handler(server, &uri_caljson);
+            httpd_register_uri_handler(server, &uri_dlcal);
             httpd_register_uri_handler(server, &uri_angs);
             httpd_register_uri_handler(server, &uri_sensor);
             

@@ -1,3 +1,4 @@
+
 #include "servo_controller.h"
 #include "sensor_monitor.h"
 #include "freertos/FreeRTOS.h"
@@ -5,7 +6,9 @@
 #include "driver/ledc.h"
 #include "esp_log.h"
 #include "nvs.h"
+#include "cJSON.h"
 #include <string.h>
+#include <stdio.h>
 
 static const char *TAG = "SERVO";
 
@@ -25,12 +28,29 @@ static int32_t target_high_right = 90;
 static int32_t target_high_left  = 90;
 static int32_t target_low_right  = 90;
 
+static int active_animation = 0; // 0=None, 1=Walk Forward, 2=Walk Back
+
+// =========================================================
+// ESPRobot Calibration Defaults
+// Replace these with the output from your Web Server download
+// =========================================================
 static int32_t offset_low_left   = 0;
 static int32_t offset_high_right = 0;
 static int32_t offset_high_left  = 0;
 static int32_t offset_low_right  = 0;
 
-static int active_animation = 0; // 0=None, 1=Walk Forward, 2=Walk Back
+struct Pose { int32_t ll, hr, hl, lr; };
+static Pose poses[5] = {
+    {0, 180, 180, 0},    // sit
+    {0, 0, 0, 0},        // stand
+    {90, 180, 180, 90},  // stretch_down
+    {180, 90, 90, 180},  // stretch_back
+    {90, 90, 90, 90}     // stop
+};
+// =========================================================
+
+static const char* pose_names[5] = {"sit", "stand", "stretch_down", "stretch_back", "stop"};
+static const char* pose_keys[5]  = {"sit", "std", "sdn", "sbk", "stp"}; // Short NVS safe keys
 
 static void write_servo_calibrated(ledc_channel_t channel, int32_t target_angle, int32_t offset) {
     int32_t final_angle = target_angle + offset;
@@ -55,8 +75,8 @@ static void servo_animation_task(void *pv) {
     
     while(1) {
         if (sensor_is_safety_locked()) {
-            target_low_left = 90; target_high_right = 90;
-            target_high_left = 90; target_low_right = 90;
+            target_low_left = poses[4].ll; target_high_right = poses[4].hr;
+            target_high_left = poses[4].hl; target_low_right = poses[4].lr;
             apply_all_servos();
             active_animation = 0; // Cancel animation on safety trip
             vTaskDelay(pdMS_TO_TICKS(100));
@@ -92,10 +112,20 @@ static void servo_animation_task(void *pv) {
 void servo_controller_init() {
     nvs_handle_t my_handle;
     if (nvs_open("storage", NVS_READONLY, &my_handle) == ESP_OK) {
+        // Load Offsets
         nvs_get_i32(my_handle, "ll_off", &offset_low_left);
         nvs_get_i32(my_handle, "hr_off", &offset_high_right);
         nvs_get_i32(my_handle, "hl_off", &offset_high_left);
         nvs_get_i32(my_handle, "lr_off", &offset_low_right);
+
+        // Load Action Poses
+        for (int i = 0; i < 5; i++) {
+            char key[16];
+            snprintf(key, sizeof(key), "p_%s_ll", pose_keys[i]); nvs_get_i32(my_handle, key, &poses[i].ll);
+            snprintf(key, sizeof(key), "p_%s_hr", pose_keys[i]); nvs_get_i32(my_handle, key, &poses[i].hr);
+            snprintf(key, sizeof(key), "p_%s_hl", pose_keys[i]); nvs_get_i32(my_handle, key, &poses[i].hl);
+            snprintf(key, sizeof(key), "p_%s_lr", pose_keys[i]); nvs_get_i32(my_handle, key, &poses[i].lr);
+        }
         nvs_close(my_handle);
     }
 
@@ -118,7 +148,7 @@ void servo_controller_init() {
     chan_cfg.gpio_num = SERVO_HIGH_LEFT_PIN;  chan_cfg.channel = SERVO_HIGH_LEFT_CH;  ledc_channel_config(&chan_cfg);
     chan_cfg.gpio_num = SERVO_LOW_RIGHT_PIN;  chan_cfg.channel = SERVO_LOW_RIGHT_CH;  ledc_channel_config(&chan_cfg);
 
-    apply_all_servos();
+    servo_set_action("stop");
     
     // Start animation loop thread
     xTaskCreate(servo_animation_task, "anim_task", 4096, NULL, 5, NULL);
@@ -137,12 +167,6 @@ void servo_set_target(const char* id, int angle) {
     if (strcmp(id, "all") == 0) {
         target_low_left = angle; target_high_right = angle; target_high_left = angle; target_low_right = angle;
     }
-    if (strcmp(id, "front") == 0) {
-        target_high_left = angle; target_high_right = angle;
-    }
-    if (strcmp(id, "back") == 0) {
-        target_low_left = angle; target_low_right = angle;
-    }
     
     apply_all_servos();
 }
@@ -156,22 +180,14 @@ void servo_set_action(const char* action_name) {
         active_animation = 2;
     } else {
         active_animation = 0; // Stop looping animations for static poses
-        
-        if (strcmp(action_name, "sit") == 0) {
-            target_high_left = 180; target_high_right = 180; // Front 180
-            target_low_left = 0;    target_low_right = 0;    // Back 0
-        } else if (strcmp(action_name, "stand") == 0) {
-            target_high_left = 0; target_high_right = 0; // Front 0
-            target_low_left = 0;  target_low_right = 0;  // Back 0
-        } else if (strcmp(action_name, "stretch_down") == 0) {
-            target_high_left = 180; target_high_right = 180; // Front 180
-            target_low_left = 90;   target_low_right = 90;   // Back 90
-        } else if (strcmp(action_name, "stretch_back") == 0) {
-            target_high_left = 90;  target_high_right = 90;  // Front 90
-            target_low_left = 180;  target_low_right = 180;  // Back 180
-        } else if (strcmp(action_name, "stop") == 0) {
-            target_high_left = 90; target_high_right = 90;
-            target_low_left = 90;  target_low_right = 90;
+        for (int i = 0; i < 5; i++) {
+            if (strcmp(action_name, pose_names[i]) == 0) {
+                target_low_left   = poses[i].ll;
+                target_high_right = poses[i].hr;
+                target_high_left  = poses[i].hl;
+                target_low_right  = poses[i].lr;
+                break;
+            }
         }
         apply_all_servos();
     }
@@ -187,21 +203,98 @@ void servo_get_offsets(int* ll, int* hr, int* hl, int* lr) {
     *hl = offset_high_left; *lr = offset_low_right;
 }
 
-void servo_set_offsets(int ll, int hr, int hl, int lr, bool save_to_nvs) {
-    offset_low_left = ll; offset_high_right = hr;
-    offset_high_left = hl; offset_low_right = lr;
-    
-    apply_all_servos();
-    
-    if (save_to_nvs) {
-        nvs_handle_t my_handle;
-        if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
-            nvs_set_i32(my_handle, "ll_off", offset_low_left);
-            nvs_set_i32(my_handle, "hr_off", offset_high_right);
-            nvs_set_i32(my_handle, "hl_off", offset_high_left);
-            nvs_set_i32(my_handle, "lr_off", offset_low_right);
-            nvs_commit(my_handle);
-            nvs_close(my_handle);
+void servo_set_calibration(const char* target, int ll, int hr, int hl, int lr, bool save_to_nvs) {
+    if (strcmp(target, "offsets") == 0) {
+        offset_low_left = ll; offset_high_right = hr;
+        offset_high_left = hl; offset_low_right = lr;
+        apply_all_servos();
+        
+        if (save_to_nvs) {
+            nvs_handle_t my_handle;
+            if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
+                nvs_set_i32(my_handle, "ll_off", offset_low_left);
+                nvs_set_i32(my_handle, "hr_off", offset_high_right);
+                nvs_set_i32(my_handle, "hl_off", offset_high_left);
+                nvs_set_i32(my_handle, "lr_off", offset_low_right);
+                nvs_commit(my_handle);
+                nvs_close(my_handle);
+            }
+        }
+    } else {
+        for (int i = 0; i < 5; i++) {
+            if (strcmp(target, pose_names[i]) == 0) {
+                poses[i].ll = ll; poses[i].hr = hr; poses[i].hl = hl; poses[i].lr = lr;
+                servo_set_action(pose_names[i]); // Trigger pose change to preview visually
+                
+                if (save_to_nvs) {
+                    nvs_handle_t my_handle;
+                    if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
+                        char key[16];
+                        snprintf(key, sizeof(key), "p_%s_ll", pose_keys[i]); nvs_set_i32(my_handle, key, ll);
+                        snprintf(key, sizeof(key), "p_%s_hr", pose_keys[i]); nvs_set_i32(my_handle, key, hr);
+                        snprintf(key, sizeof(key), "p_%s_hl", pose_keys[i]); nvs_set_i32(my_handle, key, hl);
+                        snprintf(key, sizeof(key), "p_%s_lr", pose_keys[i]); nvs_set_i32(my_handle, key, lr);
+                        nvs_commit(my_handle);
+                        nvs_close(my_handle);
+                    }
+                }
+                break;
+            }
         }
     }
+}
+
+char* servo_get_calibrations_json() {
+    cJSON *root = cJSON_CreateObject();
+    
+    cJSON *off = cJSON_CreateObject();
+    cJSON_AddNumberToObject(off, "ll", offset_low_left);
+    cJSON_AddNumberToObject(off, "hr", offset_high_right);
+    cJSON_AddNumberToObject(off, "hl", offset_high_left);
+    cJSON_AddNumberToObject(off, "lr", offset_low_right);
+    cJSON_AddItemToObject(root, "offsets", off);
+
+    for (int i = 0; i < 5; i++) {
+        cJSON *p = cJSON_CreateObject();
+        cJSON_AddNumberToObject(p, "ll", poses[i].ll);
+        cJSON_AddNumberToObject(p, "hr", poses[i].hr);
+        cJSON_AddNumberToObject(p, "hl", poses[i].hl);
+        cJSON_AddNumberToObject(p, "lr", poses[i].lr);
+        cJSON_AddItemToObject(root, pose_names[i], p);
+    }
+
+    char *json_str = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    return json_str;
+}
+
+char* servo_get_calibrations_cpp() {
+    char* buf = (char*)malloc(1024);
+    snprintf(buf, 1024,
+        "// =========================================================\n"
+        "// ESPRobot Calibration Defaults\n"
+        "// Replace the block in servo_controller.cpp with these lines\n"
+        "// to permanently embed your custom actions into the firmware.\n"
+        "// =========================================================\n\n"
+        "static int32_t offset_low_left   = %ld;\n"
+        "static int32_t offset_high_right = %ld;\n"
+        "static int32_t offset_high_left  = %ld;\n"
+        "static int32_t offset_low_right  = %ld;\n\n"
+        "struct Pose { int32_t ll, hr, hl, lr; };\n"
+        "static Pose poses[5] = {\n"
+        "    {%ld, %ld, %ld, %ld},  // sit\n"
+        "    {%ld, %ld, %ld, %ld},  // stand\n"
+        "    {%ld, %ld, %ld, %ld},  // stretch_down\n"
+        "    {%ld, %ld, %ld, %ld},  // stretch_back\n"
+        "    {%ld, %ld, %ld, %ld}   // stop\n"
+        "};\n"
+        "// =========================================================\n",
+        offset_low_left, offset_high_right, offset_high_left, offset_low_right,
+        poses[0].ll, poses[0].hr, poses[0].hl, poses[0].lr,
+        poses[1].ll, poses[1].hr, poses[1].hl, poses[1].lr,
+        poses[2].ll, poses[2].hr, poses[2].hl, poses[2].lr,
+        poses[3].ll, poses[3].hr, poses[3].hl, poses[3].lr,
+        poses[4].ll, poses[4].hr, poses[4].hl, poses[4].lr
+    );
+    return buf;
 }
