@@ -8,20 +8,46 @@
 #include "esp_event.h"
 #include "nvs.h"
 #include "cJSON.h"
+#include "esp_timer.h"
 
 static const char *TAG = "WIFI_MGR";
+
+static int64_t disconnect_time = 0;
+static bool ap_fallback_active = false;
 
 // Background event handler to automatically reconnect if the router drops the connection
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        ESP_LOGW(TAG, "Disconnected from Wi-Fi. Enabling AP fallback and retrying STA in 3s...");
-        // Re-enable AP mode so the user can reconfigure if the router is permanently gone
-        esp_wifi_set_mode(WIFI_MODE_APSTA);
+        
+        // Start the failure timer if it hasn't started yet
+        if (disconnect_time == 0) {
+            disconnect_time = esp_timer_get_time();
+        }
+        
+        // Calculate how many seconds we've been disconnected
+        int64_t elapsed_sec = (esp_timer_get_time() - disconnect_time) / 1000000;
+        
+        if (elapsed_sec >= 300) {
+            if (!ap_fallback_active) {
+                ESP_LOGW(TAG, "Wi-Fi disconnected for 300s. Enabling AP fallback...");
+                esp_wifi_set_mode(WIFI_MODE_APSTA);
+                ap_fallback_active = true;
+            }
+            ESP_LOGW(TAG, "Disconnected from Wi-Fi. AP Active. Retrying STA in 3s...");
+        } else {
+            ESP_LOGW(TAG, "Disconnected from Wi-Fi. Retrying STA in 3s... (AP fallback in %d s)", (int)(300 - elapsed_sec));
+        }
+        
         vTaskDelay(pdMS_TO_TICKS(3000)); // 3 second delay prevents spamming the AP
         esp_wifi_connect();
+        
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
+        
+        // Reset our failure timer and state
+        disconnect_time = 0;
+        ap_fallback_active = false;
         
         // Disable Setup AP mode to lock the radio onto the router's channel
         // This eliminates radio channel-hopping, massive latency, and dropped packets
@@ -52,36 +78,53 @@ void wifi_manager_init() {
     ap_config.ap.max_connection = 4;
     ap_config.ap.authmode = WIFI_AUTH_OPEN; 
 
+    // Temporarily set APSTA so we can apply the hardware AP config without ESP_ERR_WIFI_MODE
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
     
-    // Explicitly mirror the old working code: Start Wi-Fi FIRST before reading NVS
-    ESP_ERROR_CHECK(esp_wifi_start());
+    nvs_handle_t my_handle;
+    bool has_creds = false;
+    char ssid[33] = {0}; 
+    char pass[65] = {0};
 
     // Auto-Connect Station sequentially if configurations exist
-    nvs_handle_t my_handle;
     if (nvs_open("storage", NVS_READONLY, &my_handle) == ESP_OK) {
-        char ssid[33] = {0}; 
-        char pass[65] = {0};
         size_t s_len = sizeof(ssid); 
         size_t p_len = sizeof(pass);
         
         if (nvs_get_str(my_handle, "wifi_ssid", ssid, &s_len) == ESP_OK &&
             nvs_get_str(my_handle, "wifi_pass", pass, &p_len) == ESP_OK) {
-            
-            ESP_LOGI(TAG, "Connecting to saved network: %s", ssid);
-            wifi_config_t sta_config = {};
-            
-            // Safely copy string payload over to hardware configurations
-            strncpy((char*)sta_config.sta.ssid, ssid, 32);
-            strncpy((char*)sta_config.sta.password, pass, 64);
-            
-            ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_config));
-            esp_wifi_connect();
-        } else {
-            ESP_LOGW(TAG, "No Wi-Fi credentials found. AP Mode only.");
+            has_creds = true;
         }
         nvs_close(my_handle);
+    }
+
+    if (has_creds) {
+        // Boot straight into STA mode, AP is disabled natively to avoid radio interference
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+        ap_fallback_active = false;
+    } else {
+        // No credentials, leave APSTA active immediately so the user can configure
+        ap_fallback_active = true;
+    }
+    
+    // Explicitly mirror the old working code: Start Wi-Fi FIRST before connecting
+    ESP_ERROR_CHECK(esp_wifi_start());
+
+    if (has_creds) {
+        ESP_LOGI(TAG, "Connecting to saved network: %s", ssid);
+        wifi_config_t sta_config = {};
+        
+        // Safely copy string payload over to hardware configurations
+        strncpy((char*)sta_config.sta.ssid, ssid, 32);
+        strncpy((char*)sta_config.sta.password, pass, 64);
+        
+        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_config));
+        
+        disconnect_time = esp_timer_get_time(); // Start the 300s failure countdown
+        esp_wifi_connect();
+    } else {
+        ESP_LOGW(TAG, "No Wi-Fi credentials found. AP Mode only.");
     }
 }
 
