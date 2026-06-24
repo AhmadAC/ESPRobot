@@ -94,16 +94,16 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
                 <input type='range' class='srv-slider' id='low_left' min='0' max='180' value='90' oninput='moveServo("low_left", this.value)' onmousedown='dragStart("low_left")' onmouseup='dragEnd()' ontouchstart='dragStart("low_left")' ontouchend='dragEnd()'>
             </div>
             <div class='ctrl-group'>
-                <div class='ctrl-header'><span>High Right Shoulder (IO10)</span><span id='val_high_right'>90&deg;</span></div>
-                <input type='range' class='srv-slider' id='high_right' min='0' max='180' value='90' oninput='moveServo("high_right", this.value)' onmousedown='dragStart("high_right")' onmouseup='dragEnd()' ontouchstart='dragStart("high_right")' ontouchend='dragEnd()'>
+                <div class='ctrl-header'><span>High Left Shoulder (IO11)</span><span id='val_high_left'>90&deg;</span></div>
+                <input type='range' class='srv-slider' id='high_left' min='0' max='180' value='90' oninput='moveServo("high_left", this.value)' onmousedown='dragStart("high_left")' onmouseup='dragEnd()' ontouchstart='dragStart("high_left")' ontouchend='dragEnd()'>
             </div>
             <div class='ctrl-group'>
                 <div class='ctrl-header'><span>Low Right Leg (IO9)</span><span id='val_low_right'>90&deg;</span></div>
                 <input type='range' class='srv-slider' id='low_right' min='0' max='180' value='90' oninput='moveServo("low_right", this.value)' onmousedown='dragStart("low_right")' onmouseup='dragEnd()' ontouchstart='dragStart("low_right")' ontouchend='dragEnd()'>
             </div>
             <div class='ctrl-group'>
-                <div class='ctrl-header'><span>High Left Shoulder (IO11)</span><span id='val_high_left'>90&deg;</span></div>
-                <input type='range' class='srv-slider' id='high_left' min='0' max='180' value='90' oninput='moveServo("high_left", this.value)' onmousedown='dragStart("high_left")' onmouseup='dragEnd()' ontouchstart='dragStart("high_left")' ontouchend='dragEnd()'>
+                <div class='ctrl-header'><span>High Right Shoulder (IO10)</span><span id='val_high_right'>90&deg;</span></div>
+                <input type='range' class='srv-slider' id='high_right' min='0' max='180' value='90' oninput='moveServo("high_right", this.value)' onmousedown='dragStart("high_right")' onmouseup='dragEnd()' ontouchstart='dragStart("high_right")' ontouchend='dragEnd()'>
             </div>
         </div>
     </div>
@@ -172,10 +172,6 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
     let servoTimeouts = {}; 
     let allCalibrations = {};
     let activeDrag = null;
-    
-    // Throttling state for sliders to prevent network overload
-    let pendingServo = {};
-    let isFetchingServo = {};
     const legMap = { 'low_left': 'll', 'high_right': 'hr', 'high_left': 'hl', 'low_right': 'lr' };
 
     function fetchJSON(url, bodyData) {
@@ -254,7 +250,6 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
 
     function doAction(act) {
         // Optimistic UI Update: Snap the sliders instantly using known calibration limits 
-        // to make the interface feel perfectly responsive while the hardware catches up
         if (allCalibrations[act]) {
             let p = allCalibrations[act];
             for (let leg in legMap) {
@@ -271,35 +266,17 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
     function moveServo(id, angle) {
         document.getElementById('val_' + id).innerHTML = angle + '&deg;';
         
-        // Network throttling: If a request is currently active, queue the newest slider angle.
-        // It will be sent exactly when the ESP32 is ready, preventing socket exhaustion.
-        if (isFetchingServo[id]) {
-            pendingServo[id] = angle;
-            return;
-        }
-        sendServoUpdate(id, angle);
-    }
-    
-    function sendServoUpdate(id, angle) {
-        isFetchingServo[id] = true;
-        fetchJSON('/servo', {id: id, angle: parseInt(angle)})
-            .then(() => processNextServoQueue(id))
-            .catch(() => processNextServoQueue(id));
-    }
-    
-    function processNextServoQueue(id) {
-        isFetchingServo[id] = false;
-        if (pendingServo[id] !== undefined) {
-            let nextAngle = pendingServo[id];
-            delete pendingServo[id];
-            sendServoUpdate(id, nextAngle);
-        }
+        // Debounce inputs: clears the previous pending fetch if the user is still dragging
+        // This drops intermediate frames and immediately snaps to the final location without lag
+        clearTimeout(servoTimeouts[id]);
+        servoTimeouts[id] = setTimeout(() => {
+            fetchJSON('/servo', {id: id, angle: parseInt(angle)});
+        }, 50); 
     }
 
     function toggleSensor() {
         localSensorEnabled = !localSensorEnabled;
         
-        // Optimistic UI Update ensures the button snaps instantly without waiting for network response
         let btn = document.getElementById('btn_sensor');
         if (localSensorEnabled) {
             btn.innerText = "Disable Sensor"; btn.style.background = "#e74c3c";
@@ -357,7 +334,6 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
                     liveSpan.style.color = "#7f8c8d";
                 }
 
-                // Only sync the button state to the backend state if the user isn't actively interacting with it
                 if (document.activeElement !== document.getElementById('btn_sensor')) {
                     localSensorEnabled = data.sensor_enabled;
                     let btn = document.getElementById('btn_sensor');
@@ -373,18 +349,16 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
                     document.getElementById('val_threshold').innerText = data.sensor_threshold + "cm";
                 }
                 
-                // Chain updates sequentially so connections don't bottleneck if Wi-Fi drops
                 setTimeout(updateStatus, 500); 
             })
             .catch(err => {
-                // Wait longer to recover if a network drop occurs
                 setTimeout(updateStatus, 1500); 
             });
     }
 
     window.onload = function() { 
         fetchCalibrations();
-        updateStatus(); // Starts the recursive chaining process instead of blind setInterval
+        updateStatus(); 
     }
 </script>
 </body>
