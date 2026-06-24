@@ -133,14 +133,14 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
             <div>
                 <label>Low Left Motor Limit:</label>
                 <input type='number' id='cal_ll' value='0'>
-                <label>High Right Motor Limit:</label>
-                <input type='number' id='cal_hr' value='0'>
+                <label>Low Right Motor Limit:</label>
+                <input type='number' id='cal_lr' value='0'>
             </div>
             <div>
                 <label>High Left Motor Limit:</label>
                 <input type='number' id='cal_hl' value='0'>
-                <label>Low Right Motor Limit:</label>
-                <input type='number' id='cal_lr' value='0'>
+                <label>High Right Motor Limit:</label>
+                <input type='number' id='cal_hr' value='0'>
             </div>
         </div>
         <div class='grid' style='margin-top:15px;'>
@@ -169,6 +169,7 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
 
 <script>
     let localSensorEnabled = false; 
+    let servoTimeouts = {}; 
     let allCalibrations = {};
     let activeDrag = null;
     
