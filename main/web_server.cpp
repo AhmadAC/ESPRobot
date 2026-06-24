@@ -533,7 +533,7 @@ void web_server_init() {
         config.task_priority = 5;                       // Standardized to baseline HTTP daemon logic
         config.stack_size = 8192;                       // Guarantee stack space for processing JSON inputs safely
         config.lru_purge_enable = true;                 // Purge stale sockets dynamically to maintain active tunnels
-        config.max_open_sockets = 10;                   // Higher ceiling array size allowing concurrent fetch requests smoothly
+        config.max_open_sockets = 7;                    // Max out default LWIP sockets without requiring sdkconfig rebuilds
         config.recv_wait_timeout = 3;                   // Swift socket release on unresponsive clients
         config.send_wait_timeout = 3;                   // Swift socket release on slow transfers
         
