@@ -1,4 +1,3 @@
-
 #include "servo_controller.h"
 #include "sensor_monitor.h"
 #include "freertos/FreeRTOS.h"
@@ -150,8 +149,8 @@ void servo_controller_init() {
 
     servo_set_action("stop");
     
-    // Start animation loop thread
-    xTaskCreate(servo_animation_task, "anim_task", 4096, NULL, 5, NULL);
+    // Explicitly pin to Core 0 so it NEVER interrupts the Wi-Fi/Web Server (Core 1)
+    xTaskCreatePinnedToCore(servo_animation_task, "anim_task", 4096, NULL, 5, NULL, 0);
     ESP_LOGI(TAG, "Hardware PWM and Action Task Initialized");
 }
 

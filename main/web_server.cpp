@@ -255,11 +255,20 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         clearTimeout(servoTimeouts[id]);
         servoTimeouts[id] = setTimeout(() => {
             fetchJSON('/servo', {id: id, angle: parseInt(angle)});
-        }, 150); 
+        }, 100); 
     }
 
     function toggleSensor() {
         localSensorEnabled = !localSensorEnabled;
+        
+        // Optimistic UI Update ensures the button snaps instantly without waiting for network response
+        let btn = document.getElementById('btn_sensor');
+        if (localSensorEnabled) {
+            btn.innerText = "Disable Sensor"; btn.style.background = "#e74c3c";
+        } else {
+            btn.innerText = "Enable Sensor"; btn.style.background = "#27ae60";
+        }
+        
         sendSensorConfig();
     }
 
@@ -301,7 +310,6 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
                     }
                 }
 
-                localSensorEnabled = data.sensor_enabled;
                 let liveSpan = document.getElementById('live_dist');
                 if (data.sensor_enabled) {
                     liveSpan.innerText = data.sensor_distance >= 0 ? data.sensor_distance.toFixed(1) : "Out of Range";
@@ -311,11 +319,15 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
                     liveSpan.style.color = "#7f8c8d";
                 }
 
-                let btn = document.getElementById('btn_sensor');
-                if (data.sensor_enabled) {
-                    btn.innerText = "Disable Sensor"; btn.style.background = "#e74c3c";
-                } else {
-                    btn.innerText = "Enable Sensor"; btn.style.background = "#27ae60";
+                // Only sync the button state to the backend state if the user isn't actively interacting with it
+                if (document.activeElement !== document.getElementById('btn_sensor')) {
+                    localSensorEnabled = data.sensor_enabled;
+                    let btn = document.getElementById('btn_sensor');
+                    if (data.sensor_enabled) {
+                        btn.innerText = "Disable Sensor"; btn.style.background = "#e74c3c";
+                    } else {
+                        btn.innerText = "Enable Sensor"; btn.style.background = "#27ae60";
+                    }
                 }
 
                 if (document.activeElement !== document.getElementById('threshold')) {
@@ -503,8 +515,7 @@ static esp_err_t angles_get_handler(httpd_req_t *req) {
     char *json_str = cJSON_PrintUnformatted(root);
     httpd_resp_set_type(req, "application/json");
     
-    // Command the browser to instantly drop this socket after resolving to free the pool
-    httpd_resp_set_hdr(req, "Connection", "close"); 
+    // Kept keep-alive open intentionally to drastically improve TCP pool speeds
     httpd_resp_send(req, json_str, strlen(json_str));
     
     cJSON_Delete(root);
@@ -519,10 +530,10 @@ void web_server_init() {
         // Optimize configuration for swift request processing and thread isolation
         config.max_uri_handlers = 12;
         config.core_id = 1;                             // Restrict the HTTP server strictly to Core 1
-        config.task_priority = 6;                       // Elevate task priority slightly above common applications
+        config.task_priority = 5;                       // Standardized to baseline HTTP daemon logic
         config.stack_size = 8192;                       // Guarantee stack space for processing JSON inputs safely
         config.lru_purge_enable = true;                 // Purge stale sockets dynamically to maintain active tunnels
-        config.max_open_sockets = 7;                    // Permit up to 7 concurrent sockets to sustain dashboard polling
+        config.max_open_sockets = 10;                   // Higher ceiling array size allowing concurrent fetch requests smoothly
         config.recv_wait_timeout = 3;                   // Swift socket release on unresponsive clients
         config.send_wait_timeout = 3;                   // Swift socket release on slow transfers
         

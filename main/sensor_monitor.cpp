@@ -12,7 +12,7 @@ static const char *TAG = "SENSOR";
 #define ULTRASONIC_TRIG_PIN GPIO_NUM_4
 #define ULTRASONIC_ECHO_PIN GPIO_NUM_5
 
-static bool sensor_enabled = false; // Always OFF by default per request
+static bool sensor_enabled = false; 
 static bool safety_lock_engaged = false;
 static int32_t distance_threshold = 20; 
 static float current_distance = -1.0f; 
@@ -33,7 +33,9 @@ static float read_ultrasonic_distance() {
     gpio_set_level(ULTRASONIC_TRIG_PIN, 0);
 
     int64_t start_time = esp_timer_get_time();
-    int64_t timeout = 40000; 
+    // Reduced timeout to 15ms (~2.5 meters max) to prevent blocking the CPU
+    int64_t timeout = 15000; 
+    
     while (gpio_get_level(ULTRASONIC_ECHO_PIN) == 0) {
         if (esp_timer_get_time() - start_time > timeout) return -1.0f;
     }
@@ -97,7 +99,8 @@ void sensor_monitor_init() {
     
     gpio_set_level(ULTRASONIC_TRIG_PIN, 0);
 
-    xTaskCreate(ultrasonic_safety_task, "ultrasonic_task", 4096, NULL, 5, NULL);
+    // Explicitly pin to Core 0 so it NEVER interrupts the Wi-Fi/Web Server (Core 1)
+    xTaskCreatePinnedToCore(ultrasonic_safety_task, "ultrasonic_task", 4096, NULL, 5, NULL, 0);
 }
 
 bool sensor_is_enabled() { return sensor_enabled; }
