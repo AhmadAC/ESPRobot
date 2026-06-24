@@ -37,8 +37,9 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         label { display: block; margin-bottom: 8px; font-weight: bold; }
         input[type=range] { width: 100%; margin-bottom: 15px; cursor: pointer; }
         input[type=range]:disabled { cursor: not-allowed; opacity: 0.5; }
-        button { background: #3498db; color: white; border: none; padding: 12px 20px; border-radius: 6px; cursor: pointer; font-size: 15px; width: 100%; transition: 0.2s; }
+        button { background: #3498db; color: white; border: none; padding: 12px 20px; border-radius: 6px; cursor: pointer; font-size: 15px; width: 100%; transition: transform 0.1s, background 0.2s; }
         button:hover { background: #2980b9; }
+        button:active { transform: scale(0.95); opacity: 0.9; }
         select, input[type=password], input[type=number] { width: 100%; padding: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 6px; margin-bottom: 15px; }
         .pass-container { display: flex; gap: 10px; align-items: center; margin-bottom: 15px; }
         .pass-container input { margin-bottom: 0; }
@@ -168,9 +169,13 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
 
 <script>
     let localSensorEnabled = false; 
-    let servoTimeouts = {}; 
     let allCalibrations = {};
     let activeDrag = null;
+    
+    // Throttling state for sliders to prevent network overload
+    let pendingServo = {};
+    let isFetchingServo = {};
+    const legMap = { 'low_left': 'll', 'high_right': 'hr', 'high_left': 'hl', 'low_right': 'lr' };
 
     function fetchJSON(url, bodyData) {
         return fetch(url, {
@@ -247,15 +252,47 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
     }
 
     function doAction(act) {
+        // Optimistic UI Update: Snap the sliders instantly using known calibration limits 
+        // to make the interface feel perfectly responsive while the hardware catches up
+        if (allCalibrations[act]) {
+            let p = allCalibrations[act];
+            for (let leg in legMap) {
+                let val = p[legMap[leg]];
+                let el = document.getElementById(leg);
+                if (el) el.value = val;
+                let valEl = document.getElementById('val_' + leg);
+                if (valEl) valEl.innerHTML = val + '&deg;';
+            }
+        }
         fetchJSON('/action', {action: act});
     }
 
     function moveServo(id, angle) {
         document.getElementById('val_' + id).innerHTML = angle + '&deg;';
-        clearTimeout(servoTimeouts[id]);
-        servoTimeouts[id] = setTimeout(() => {
-            fetchJSON('/servo', {id: id, angle: parseInt(angle)});
-        }, 100); 
+        
+        // Network throttling: If a request is currently active, queue the newest slider angle.
+        // It will be sent exactly when the ESP32 is ready, preventing socket exhaustion.
+        if (isFetchingServo[id]) {
+            pendingServo[id] = angle;
+            return;
+        }
+        sendServoUpdate(id, angle);
+    }
+    
+    function sendServoUpdate(id, angle) {
+        isFetchingServo[id] = true;
+        fetchJSON('/servo', {id: id, angle: parseInt(angle)})
+            .then(() => processNextServoQueue(id))
+            .catch(() => processNextServoQueue(id));
+    }
+    
+    function processNextServoQueue(id) {
+        isFetchingServo[id] = false;
+        if (pendingServo[id] !== undefined) {
+            let nextAngle = pendingServo[id];
+            delete pendingServo[id];
+            sendServoUpdate(id, nextAngle);
+        }
     }
 
     function toggleSensor() {
