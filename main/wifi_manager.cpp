@@ -11,28 +11,13 @@
 #include "cJSON.h"
 
 static const char *TAG = "WIFI_MGR";
-static bool s_reconnect = true;
 
-// Wi-Fi Event Handler to automatically connect and reconnect when the station is ready or dropped
+// Background event handler to automatically reconnect if the router drops the connection
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        wifi_config_t conf;
-        esp_wifi_get_config(WIFI_IF_STA, &conf);
-        if (strlen((char*)conf.sta.ssid) > 0) {
-            ESP_LOGI(TAG, "Station started, connecting to %s...", conf.sta.ssid);
-            esp_wifi_connect();
-        }
-    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        if (s_reconnect) {
-            wifi_config_t conf;
-            esp_wifi_get_config(WIFI_IF_STA, &conf);
-            if (strlen((char*)conf.sta.ssid) > 0) {
-                ESP_LOGI(TAG, "Disconnected from Wi-Fi. Retrying...");
-                esp_wifi_connect();
-            }
-        } else {
-            ESP_LOGI(TAG, "Disconnected. Auto-reconnect disabled temporarily.");
-        }
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        ESP_LOGI(TAG, "Disconnected from Wi-Fi. Retrying in 3 seconds...");
+        vTaskDelay(pdMS_TO_TICKS(3000)); // 3 second delay prevents spamming the AP
+        esp_wifi_connect();
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
@@ -47,13 +32,13 @@ void wifi_manager_init() {
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
-    // Register event handlers
+    // Register basic event handlers for drops and IP assignment
     esp_event_handler_instance_t instance_any_id;
     esp_event_handler_instance_t instance_got_ip;
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, &instance_any_id));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &wifi_event_handler, NULL, &instance_any_id));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL, &instance_got_ip));
 
-    // Configure both station and AP Mode config profiles
+    // Configure AP Mode profile
     wifi_config_t ap_config = {};
     strcpy((char*)ap_config.ap.ssid, "ESPRobot_Config");
     ap_config.ap.ssid_len = strlen("ESPRobot_Config");
@@ -63,44 +48,41 @@ void wifi_manager_init() {
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
+    
+    // Explicitly mirror the old working code: Start Wi-Fi FIRST before reading NVS
+    ESP_ERROR_CHECK(esp_wifi_start());
 
-    // Auto-Connect Station if configurations exist
+    // Auto-Connect Station sequentially if configurations exist
     nvs_handle_t my_handle;
-    bool has_sta_config = false;
     if (nvs_open("storage", NVS_READONLY, &my_handle) == ESP_OK) {
-        char ssid[33] = {0}; char pass[65] = {0};
-        size_t s_len = sizeof(ssid); size_t p_len = sizeof(pass);
+        char ssid[33] = {0}; 
+        char pass[65] = {0};
+        size_t s_len = sizeof(ssid); 
+        size_t p_len = sizeof(pass);
+        
         if (nvs_get_str(my_handle, "wifi_ssid", ssid, &s_len) == ESP_OK &&
             nvs_get_str(my_handle, "wifi_pass", pass, &p_len) == ESP_OK) {
             
-            ESP_LOGI(TAG, "Loaded saved network: %s", ssid);
+            ESP_LOGI(TAG, "Connecting to saved network: %s", ssid);
             wifi_config_t sta_config = {};
-            strcpy((char*)sta_config.sta.ssid, ssid);
-            strcpy((char*)sta_config.sta.password, pass);
+            
+            // Safely copy string payload over to hardware configurations
+            strncpy((char*)sta_config.sta.ssid, ssid, 32);
+            strncpy((char*)sta_config.sta.password, pass, 64);
             
             ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_config));
-            has_sta_config = true;
+            esp_wifi_connect();
+        } else {
+            ESP_LOGW(TAG, "No Wi-Fi credentials found. AP Mode only.");
         }
         nvs_close(my_handle);
     }
-    
-    if (!has_sta_config) {
-        ESP_LOGW(TAG, "No Wi-Fi credentials found. AP Mode only.");
-    }
-
-    // Start Wi-Fi (this will trigger WIFI_EVENT_STA_START and auto-connect cleanly)
-    ESP_ERROR_CHECK(esp_wifi_start());
 }
 
 char* wifi_scan_networks_json() {
-    // Disable auto-reconnect temporarily to prevent ESP_ERR_WIFI_BUSY locks
-    s_reconnect = false;
-    
-    // Disconnect from active background STA connects to avoid lockup errors
-    esp_wifi_disconnect();
-    vTaskDelay(pdMS_TO_TICKS(100));
-
+    // Explicitly mirror the old working code: Never drop the active connection to scan
     esp_wifi_scan_stop();
+    
     wifi_scan_config_t scan_config = {};
     scan_config.show_hidden = true;
     
@@ -129,22 +111,12 @@ char* wifi_scan_networks_json() {
             }
         }
     } else {
-        ESP_LOGE(TAG, "Wi-Fi Scan failed to start: %s", esp_err_to_name(scan_err));
+        ESP_LOGE(TAG, "Wi-Fi Scan failed: %s", esp_err_to_name(scan_err));
     }
     
     char* json_str = cJSON_PrintUnformatted(root);
     cJSON_Delete(root); 
-
-    // Re-enable auto-reconnect and connect if we have a config
-    s_reconnect = true;
-    wifi_config_t conf;
-    if (esp_wifi_get_config(WIFI_IF_STA, &conf) == ESP_OK) {
-        if (strlen((char*)conf.sta.ssid) > 0) {
-            ESP_LOGI(TAG, "Scan complete. Reconnecting to %s...", conf.sta.ssid);
-            esp_wifi_connect();
-        }
-    }
-
+    
     return json_str;
 }
 
