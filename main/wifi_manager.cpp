@@ -110,6 +110,13 @@ void wifi_manager_init() {
     
     // Explicitly mirror the old working code: Start Wi-Fi FIRST before connecting
     ESP_ERROR_CHECK(esp_wifi_start());
+    
+    // =========================================================================
+    // FIX: Force Wi-Fi to Maximum Performance Mode (Disable Power Save)
+    // This stops the antenna from sleeping, preventing dropped auth frames 
+    // on weak connections and eliminating Web Server TCP "send : 11" bottlenecks.
+    // =========================================================================
+    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
 
     if (has_creds) {
         ESP_LOGI(TAG, "Connecting to saved network: %s", ssid);
