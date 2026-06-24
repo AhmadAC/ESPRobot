@@ -1,4 +1,4 @@
-#################### START OF FILE: main\wifi_manager.cpp ####################
+
 #include "wifi_manager.h"
 #include <string.h>
 #include "freertos/FreeRTOS.h"
