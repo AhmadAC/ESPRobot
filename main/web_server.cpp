@@ -1,4 +1,3 @@
-
 #include "web_server.h"
 #include "wifi_manager.h"
 #include "sensor_monitor.h"
@@ -91,19 +90,19 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         <div class='grid'>
             <div class='ctrl-group'>
                 <div class='ctrl-header'><span>Low Left Leg (IO12)</span><span id='val_low_left'>90&deg;</span></div>
-                <input type='range' class='srv-slider' id='low_left' min='0' max='180' value='90' oninput='moveServo("low_left", this.value)'>
+                <input type='range' class='srv-slider' id='low_left' min='0' max='180' value='90' oninput='moveServo("low_left", this.value)' onmousedown='dragStart("low_left")' onmouseup='dragEnd()' ontouchstart='dragStart("low_left")' ontouchend='dragEnd()'>
             </div>
             <div class='ctrl-group'>
                 <div class='ctrl-header'><span>High Right Shoulder (IO10)</span><span id='val_high_right'>90&deg;</span></div>
-                <input type='range' class='srv-slider' id='high_right' min='0' max='180' value='90' oninput='moveServo("high_right", this.value)'>
+                <input type='range' class='srv-slider' id='high_right' min='0' max='180' value='90' oninput='moveServo("high_right", this.value)' onmousedown='dragStart("high_right")' onmouseup='dragEnd()' ontouchstart='dragStart("high_right")' ontouchend='dragEnd()'>
             </div>
             <div class='ctrl-group'>
                 <div class='ctrl-header'><span>High Left Shoulder (IO11)</span><span id='val_high_left'>90&deg;</span></div>
-                <input type='range' class='srv-slider' id='high_left' min='0' max='180' value='90' oninput='moveServo("high_left", this.value)'>
+                <input type='range' class='srv-slider' id='high_left' min='0' max='180' value='90' oninput='moveServo("high_left", this.value)' onmousedown='dragStart("high_left")' onmouseup='dragEnd()' ontouchstart='dragStart("high_left")' ontouchend='dragEnd()'>
             </div>
             <div class='ctrl-group'>
                 <div class='ctrl-header'><span>Low Right Leg (IO9)</span><span id='val_low_right'>90&deg;</span></div>
-                <input type='range' class='srv-slider' id='low_right' min='0' max='180' value='90' oninput='moveServo("low_right", this.value)'>
+                <input type='range' class='srv-slider' id='low_right' min='0' max='180' value='90' oninput='moveServo("low_right", this.value)' onmousedown='dragStart("low_right")' onmouseup='dragEnd()' ontouchstart='dragStart("low_right")' ontouchend='dragEnd()'>
             </div>
         </div>
     </div>
@@ -275,59 +274,67 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
     }
 
     function updateStatus() {
-        fetch('/angles').then(r => r.json()).then(data => {
-            let srvCard = document.getElementById('servo_card');
-            let srvSliders = document.querySelectorAll('.srv-slider');
-            
-            if (data.safety_lock) {
-                document.getElementById('lock_banner').style.display = 'block';
-                srvCard.classList.add('locked-mode');
-                srvSliders.forEach(slider => slider.disabled = true);
-            } else {
-                document.getElementById('lock_banner').style.display = 'none';
-                srvCard.classList.remove('locked-mode');
-                srvSliders.forEach(slider => slider.disabled = false);
-            }
+        fetch('/angles')
+            .then(r => r.json())
+            .then(data => {
+                let srvCard = document.getElementById('servo_card');
+                let srvSliders = document.querySelectorAll('.srv-slider');
+                
+                if (data.safety_lock) {
+                    document.getElementById('lock_banner').style.display = 'block';
+                    srvCard.classList.add('locked-mode');
+                    srvSliders.forEach(slider => slider.disabled = true);
+                } else {
+                    document.getElementById('lock_banner').style.display = 'none';
+                    srvCard.classList.remove('locked-mode');
+                    srvSliders.forEach(slider => slider.disabled = false);
+                }
 
-            for (let [leg, stats] of Object.entries(data)) {
-                if (typeof stats === 'object') {
-                    let el = document.getElementById(leg);
-                    // Update slider values ONLY if the user isn't currently dragging them
-                    if(el && (leg !== activeDrag || data.safety_lock)) { 
-                        el.value = stats.angle; 
-                        document.getElementById('val_' + leg).innerHTML = stats.angle + '&deg;'; 
+                for (let [leg, stats] of Object.entries(data)) {
+                    if (typeof stats === 'object') {
+                        let el = document.getElementById(leg);
+                        // Update slider values ONLY if the user isn't currently dragging them
+                        if(el && (leg !== activeDrag || data.safety_lock)) { 
+                            el.value = stats.angle; 
+                            document.getElementById('val_' + leg).innerHTML = stats.angle + '&deg;'; 
+                        }
                     }
                 }
-            }
 
-            localSensorEnabled = data.sensor_enabled;
-            let liveSpan = document.getElementById('live_dist');
-            if (data.sensor_enabled) {
-                liveSpan.innerText = data.sensor_distance >= 0 ? data.sensor_distance.toFixed(1) : "Out of Range";
-                liveSpan.style.color = (data.sensor_distance > 0 && data.sensor_distance < data.sensor_threshold) ? "#e74c3c" : "#27ae60";
-            } else {
-                liveSpan.innerText = "Disabled";
-                liveSpan.style.color = "#7f8c8d";
-            }
+                localSensorEnabled = data.sensor_enabled;
+                let liveSpan = document.getElementById('live_dist');
+                if (data.sensor_enabled) {
+                    liveSpan.innerText = data.sensor_distance >= 0 ? data.sensor_distance.toFixed(1) : "Out of Range";
+                    liveSpan.style.color = (data.sensor_distance > 0 && data.sensor_distance < data.sensor_threshold) ? "#e74c3c" : "#27ae60";
+                } else {
+                    liveSpan.innerText = "Disabled";
+                    liveSpan.style.color = "#7f8c8d";
+                }
 
-            let btn = document.getElementById('btn_sensor');
-            if (data.sensor_enabled) {
-                btn.innerText = "Disable Sensor"; btn.style.background = "#e74c3c";
-            } else {
-                btn.innerText = "Enable Sensor"; btn.style.background = "#27ae60";
-            }
+                let btn = document.getElementById('btn_sensor');
+                if (data.sensor_enabled) {
+                    btn.innerText = "Disable Sensor"; btn.style.background = "#e74c3c";
+                } else {
+                    btn.innerText = "Enable Sensor"; btn.style.background = "#27ae60";
+                }
 
-            if (document.activeElement !== document.getElementById('threshold')) {
-                document.getElementById('threshold').value = data.sensor_threshold;
-                document.getElementById('val_threshold').innerText = data.sensor_threshold + "cm";
-            }
-        });
+                if (document.activeElement !== document.getElementById('threshold')) {
+                    document.getElementById('threshold').value = data.sensor_threshold;
+                    document.getElementById('val_threshold').innerText = data.sensor_threshold + "cm";
+                }
+                
+                // Chain updates sequentially so connections don't bottleneck if Wi-Fi drops
+                setTimeout(updateStatus, 500); 
+            })
+            .catch(err => {
+                // Wait longer to recover if a network drop occurs
+                setTimeout(updateStatus, 1500); 
+            });
     }
 
     window.onload = function() { 
-        updateStatus(); 
         fetchCalibrations();
-        setInterval(updateStatus, 500); 
+        updateStatus(); // Starts the recursive chaining process instead of blind setInterval
     }
 </script>
 </body>
@@ -495,6 +502,9 @@ static esp_err_t angles_get_handler(httpd_req_t *req) {
 
     char *json_str = cJSON_PrintUnformatted(root);
     httpd_resp_set_type(req, "application/json");
+    
+    // Command the browser to instantly drop this socket after resolving to free the pool
+    httpd_resp_set_hdr(req, "Connection", "close"); 
     httpd_resp_send(req, json_str, strlen(json_str));
     
     cJSON_Delete(root);
@@ -513,6 +523,8 @@ void web_server_init() {
         config.stack_size = 8192;                       // Guarantee stack space for processing JSON inputs safely
         config.lru_purge_enable = true;                 // Purge stale sockets dynamically to maintain active tunnels
         config.max_open_sockets = 7;                    // Permit up to 7 concurrent sockets to sustain dashboard polling
+        config.recv_wait_timeout = 3;                   // Swift socket release on unresponsive clients
+        config.send_wait_timeout = 3;                   // Swift socket release on slow transfers
         
         if (httpd_start(&server, &config) == ESP_OK) {
             httpd_uri_t uri_index   = { .uri = "/", .method = HTTP_GET, .handler = index_get_handler, .user_ctx = NULL };

@@ -1,4 +1,3 @@
-
 #include "wifi_manager.h"
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -15,12 +14,19 @@ static const char *TAG = "WIFI_MGR";
 // Background event handler to automatically reconnect if the router drops the connection
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        ESP_LOGI(TAG, "Disconnected from Wi-Fi. Retrying in 3 seconds...");
+        ESP_LOGW(TAG, "Disconnected from Wi-Fi. Enabling AP fallback and retrying STA in 3s...");
+        // Re-enable AP mode so the user can reconfigure if the router is permanently gone
+        esp_wifi_set_mode(WIFI_MODE_APSTA);
         vTaskDelay(pdMS_TO_TICKS(3000)); // 3 second delay prevents spamming the AP
         esp_wifi_connect();
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
+        
+        // Disable Setup AP mode to lock the radio onto the router's channel
+        // This eliminates radio channel-hopping, massive latency, and dropped packets
+        ESP_LOGI(TAG, "Disabling AP Mode to prevent cross-channel interference and speed up server.");
+        esp_wifi_set_mode(WIFI_MODE_STA);
     }
 }
 
