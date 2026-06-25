@@ -7,6 +7,7 @@
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <string.h>
 
 static const char *TAG = "WEB";
 httpd_handle_t server = NULL;
@@ -81,6 +82,8 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         <div class='btn-grid' style='margin-bottom: 25px;'>
             <button onclick='doAction("forward")'>Walk Forward</button>
             <button onclick='doAction("backward")'>Walk Backward</button>
+            <button onclick='doAction("step_forward")' style='background:#1abc9c;'>Step Forward</button>
+            <button onclick='doAction("step_backward")' style='background:#1abc9c;'>Step Backward</button>
             <button class='btn-stop' onclick='doAction("stop")'>STOP</button>
             <button onclick='doAction("sit")' style='background:#f39c12;'>Sit</button>
             <button onclick='doAction("stand")' style='background:#f39c12;'>Stand Up</button>
@@ -160,7 +163,31 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
             <div class='ctrl-group' style='border-left-color: #9b59b6;'>
                 <div class='ctrl-header'><span>Safety Halt Threshold</span><span id='val_threshold'>20cm</span></div>
                 <input type='range' id='threshold' min='5' max='100' value='20' onchange='updateThreshold(this.value)'>
-                <p style='margin: 0; font-size: 11px; color: #7f8c8d; line-height: 1.4;'>Lock all leg and shoulder motors to 90&deg; automatically if an obstacle appears closer than this limit.</p>
+                <p style='margin: 0; font-size: 11px; color: #7f8c8d; line-height: 1.4;'>Automatic response configurations trigger immediately when distance crosses this safe limit.</p>
+            </div>
+        </div>
+        <div class='grid' style='margin-top:15px;'>
+            <div class='ctrl-group' style='border-left-color: #f1c40f;'>
+                <label>Action When Tripped (Obstacle Detected):</label>
+                <select id='sensor_tripped_action' onchange='sendSensorConfig()'>
+                    <option value='stop'>Stop (Default)</option>
+                    <option value='sit'>Sit</option>
+                    <option value='stand'>Stand Up</option>
+                    <option value='stretch_down'>Stretch Down (Lean Forward)</option>
+                    <option value='stretch_back'>Stretch Back</option>
+                    <option value='none'>None (Do nothing)</option>
+                </select>
+            </div>
+            <div class='ctrl-group' style='border-left-color: #2ecc71;'>
+                <label>Action When Cleared (Obstacle Removed):</label>
+                <select id='sensor_cleared_action' onchange='sendSensorConfig()'>
+                    <option value='stand'>Stand Up</option>
+                    <option value='stop'>Stop</option>
+                    <option value='sit'>Sit</option>
+                    <option value='stretch_down'>Stretch Down (Lean Forward)</option>
+                    <option value='stretch_back'>Stretch Back</option>
+                    <option value='none'>None (Do nothing)</option>
+                </select>
             </div>
         </div>
     </div>
@@ -294,7 +321,14 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
 
     function sendSensorConfig() {
         let thresh = parseInt(document.getElementById('threshold').value) || 20;
-        fetchJSON('/sensor', {enabled: localSensorEnabled, threshold: thresh});
+        let tripAct = document.getElementById('sensor_tripped_action').value;
+        let clearAct = document.getElementById('sensor_cleared_action').value;
+        fetchJSON('/sensor', {
+            enabled: localSensorEnabled, 
+            threshold: thresh,
+            tripped_action: tripAct,
+            cleared_action: clearAct
+        });
     }
 
     function updateStatus() {
@@ -347,6 +381,14 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
                 if (document.activeElement !== document.getElementById('threshold')) {
                     document.getElementById('threshold').value = data.sensor_threshold;
                     document.getElementById('val_threshold').innerText = data.sensor_threshold + "cm";
+                }
+
+                if (document.activeElement !== document.getElementById('sensor_tripped_action')) {
+                    document.getElementById('sensor_tripped_action').value = data.sensor_tripped_action || 'stop';
+                }
+
+                if (document.activeElement !== document.getElementById('sensor_cleared_action')) {
+                    document.getElementById('sensor_cleared_action').value = data.sensor_cleared_action || 'stand';
                 }
                 
                 // Slowed down the data refresh slightly to give weak Wi-Fi networks breathing room
@@ -500,6 +542,11 @@ static esp_err_t sensor_post_handler(httpd_req_t *req) {
         if (th_item) {
             sensor_set_threshold(th_item->valueint);
         }
+        cJSON *trip_item = cJSON_GetObjectItem(json, "tripped_action");
+        cJSON *clear_item = cJSON_GetObjectItem(json, "cleared_action");
+        if (trip_item && clear_item) {
+            sensor_set_actions(trip_item->valuestring, clear_item->valuestring);
+        }
         cJSON_Delete(json);
         httpd_resp_sendstr(req, "OK");
     }
@@ -524,6 +571,10 @@ static esp_err_t angles_get_handler(httpd_req_t *req) {
     cJSON_AddBoolToObject(root, "safety_lock", sensor_is_safety_locked());
     cJSON_AddNumberToObject(root, "sensor_distance", sensor_get_distance());
     cJSON_AddNumberToObject(root, "sensor_threshold", sensor_get_threshold());
+    
+    // Safety Routine Metadata Export
+    cJSON_AddStringToObject(root, "sensor_tripped_action", sensor_get_tripped_action());
+    cJSON_AddStringToObject(root, "sensor_cleared_action", sensor_get_cleared_action());
 
     char *json_str = cJSON_PrintUnformatted(root);
     httpd_resp_set_type(req, "application/json");

@@ -1,4 +1,5 @@
 #include "sensor_monitor.h"
+#include "servo_controller.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
@@ -6,6 +7,7 @@
 #include "esp_rom_sys.h"
 #include "esp_log.h"
 #include "nvs.h"
+#include <string.h>
 
 static const char *TAG = "SENSOR";
 
@@ -17,10 +19,21 @@ static bool safety_lock_engaged = false;
 static int32_t distance_threshold = 20; 
 static float current_distance = -1.0f; 
 
+// Dynamic response buffers
+static char tripped_action[16] = "stop";
+static char cleared_action[16] = "stand";
+
 static void load_sensor_nvs() {
     nvs_handle_t my_handle;
     if (nvs_open("storage", NVS_READONLY, &my_handle) == ESP_OK) {
         nvs_get_i32(my_handle, "sens_thresh", &distance_threshold);
+        
+        size_t len = sizeof(tripped_action);
+        nvs_get_str(my_handle, "act_trip", tripped_action, &len);
+        
+        len = sizeof(cleared_action);
+        nvs_get_str(my_handle, "act_clear", cleared_action, &len);
+        
         nvs_close(my_handle);
     }
 }
@@ -33,8 +46,7 @@ static float read_ultrasonic_distance() {
     gpio_set_level(ULTRASONIC_TRIG_PIN, 0);
 
     int64_t start_time = esp_timer_get_time();
-    // Reduced timeout to 15ms (~2.5 meters max) to prevent blocking the CPU
-    int64_t timeout = 15000; 
+    int64_t timeout = 15000; // ~2.5 meters max range
     
     while (gpio_get_level(ULTRASONIC_ECHO_PIN) == 0) {
         if (esp_timer_get_time() - start_time > timeout) return -1.0f;
@@ -68,12 +80,14 @@ static void ultrasonic_safety_task(void *pvParameter) {
             current_distance = -1.0f;
         }
 
-        // Smart log tracking to avoid terminal spam
+        // State Machine State Change Hook
         if (safety_lock_engaged != last_lock_state) {
             if (safety_lock_engaged) {
-                ESP_LOGW(TAG, "Safety Lock ENGAGED! Obstacle at %.1f cm", current_distance);
+                ESP_LOGW(TAG, "Safety Lock ENGAGED! Obstacle at %.1f cm. Running action: %s", current_distance, tripped_action);
+                servo_set_action_bypass(tripped_action);
             } else {
-                ESP_LOGI(TAG, "Safety Lock RELEASED. Resuming manual control.");
+                ESP_LOGI(TAG, "Safety Lock RELEASED. Resuming control. Running action: %s", cleared_action);
+                servo_set_action_bypass(cleared_action);
             }
             last_lock_state = safety_lock_engaged;
         }
@@ -99,7 +113,7 @@ void sensor_monitor_init() {
     
     gpio_set_level(ULTRASONIC_TRIG_PIN, 0);
 
-    // Explicitly pin to Core 0 so it NEVER interrupts the Wi-Fi/Web Server (Core 1)
+    // Pinned strictly to Core 0 to prevent interference with Core 1 operations (Web server / Wi-Fi)
     xTaskCreatePinnedToCore(ultrasonic_safety_task, "ultrasonic_task", 4096, NULL, 5, NULL, 0);
 }
 
@@ -119,3 +133,22 @@ void sensor_set_threshold(int32_t threshold) {
 
 float sensor_get_distance() { return current_distance; }
 bool sensor_is_safety_locked() { return safety_lock_engaged; }
+
+const char* sensor_get_tripped_action() { return tripped_action; }
+const char* sensor_get_cleared_action() { return cleared_action; }
+
+void sensor_set_actions(const char* tripped, const char* cleared) {
+    strncpy(tripped_action, tripped, sizeof(tripped_action) - 1);
+    tripped_action[sizeof(tripped_action) - 1] = '\0';
+    
+    strncpy(cleared_action, cleared, sizeof(cleared_action) - 1);
+    cleared_action[sizeof(cleared_action) - 1] = '\0';
+
+    nvs_handle_t my_handle;
+    if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
+        nvs_set_str(my_handle, "act_trip", tripped_action);
+        nvs_set_str(my_handle, "act_clear", cleared_action);
+        nvs_commit(my_handle);
+        nvs_close(my_handle);
+    }
+}
