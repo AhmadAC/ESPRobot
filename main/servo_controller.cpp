@@ -90,102 +90,92 @@ static void servo_animation_task(void *pv) {
         }
         
         if (active_animation == 1) { 
-            // Forward Walk Loop (90 -> 135 -> 45 -> 90 -> wait 500ms)
+            // Forward Walk Loop - Diagonal Trot Gait
             if (anim_state == 0) {
-                anim_pos += 5;
-                if (anim_pos >= 135) anim_state = 1;
+                anim_pos += 4;
+                if (anim_pos >= 130) anim_state = 1;
             } else if (anim_state == 1) {
-                anim_pos -= 5;
-                if (anim_pos <= 45) anim_state = 2;
-            } else if (anim_state == 2) {
-                anim_pos += 5;
-                if (anim_pos >= 90) anim_state = 3;
-            } else if (anim_state == 3) {
-                wait_counter++;
-                if (wait_counter >= 25) { // 25 frames * 20ms = 500ms delay
-                    anim_state = 0;
-                    wait_counter = 0;
-                }
+                anim_pos -= 4;
+                if (anim_pos <= 50) anim_state = 0;
             }
             
-            // Apply identical logical angles to all servos to move in unison
-            target_low_left = anim_pos;
-            target_high_right = anim_pos;
+            // Pair 1: Front-Left and Back-Right (Move together)
             target_high_left = anim_pos;
             target_low_right = anim_pos;
+            
+            // Pair 2: Front-Right and Back-Left (Move opposite to Pair 1 to maintain balance)
+            target_high_right = 180 - anim_pos;
+            target_low_left = 180 - anim_pos;
+            
             apply_all_servos();
             vTaskDelay(pdMS_TO_TICKS(20)); // Animation frame rate
             
         } else if (active_animation == 2) {
-            // Backward Walk Loop (90 -> 45 -> 135 -> 90 -> wait 500ms)
+            // Backward Walk Loop - Reverse Phase Diagonal Trot
             if (anim_state == 0) {
-                anim_pos -= 5;
-                if (anim_pos <= 45) anim_state = 1;
+                anim_pos -= 4;
+                if (anim_pos <= 50) anim_state = 1;
             } else if (anim_state == 1) {
-                anim_pos += 5;
-                if (anim_pos >= 135) anim_state = 2;
-            } else if (anim_state == 2) {
-                anim_pos -= 5;
-                if (anim_pos <= 90) anim_state = 3;
-            } else if (anim_state == 3) {
-                wait_counter++;
-                if (wait_counter >= 25) { // 25 frames * 20ms = 500ms delay
-                    anim_state = 0;
-                    wait_counter = 0;
-                }
+                anim_pos += 4;
+                if (anim_pos >= 130) anim_state = 0;
             }
             
-            // Apply identical logical angles to all servos to move in unison
-            target_low_left = anim_pos;
-            target_high_right = anim_pos;
+            // Pair 1: Front-Left and Back-Right
             target_high_left = anim_pos;
             target_low_right = anim_pos;
+            
+            // Pair 2: Front-Right and Back-Left
+            target_high_right = 180 - anim_pos;
+            target_low_left = 180 - anim_pos;
+            
             apply_all_servos();
-            vTaskDelay(pdMS_TO_TICKS(20)); // Animation frame rate
+            vTaskDelay(pdMS_TO_TICKS(20));
             
         } else if (active_animation == 3) {
-            // Step Forward (Once: 90 -> 135 -> 45 -> 90)
+            // Step Forward (Once)
             if (anim_state == 0) {
-                anim_pos += 5;
-                if (anim_pos >= 135) anim_state = 1;
+                anim_pos += 4;
+                if (anim_pos >= 130) anim_state = 1;
             } else if (anim_state == 1) {
-                anim_pos -= 5;
-                if (anim_pos <= 45) anim_state = 2;
+                anim_pos -= 4;
+                if (anim_pos <= 50) anim_state = 2;
             } else if (anim_state == 2) {
-                anim_pos += 5;
+                anim_pos += 4;
                 if (anim_pos >= 90) {
                     anim_pos = 90;
-                    active_animation = 0; // Terminate animation (return to idle)
+                    active_animation = 0; // Terminate animation
                 }
             }
             
-            target_low_left = anim_pos;
-            target_high_right = anim_pos;
             target_high_left = anim_pos;
             target_low_right = anim_pos;
+            target_high_right = 180 - anim_pos;
+            target_low_left = 180 - anim_pos;
+            
             apply_all_servos();
             vTaskDelay(pdMS_TO_TICKS(20));
             
         } else if (active_animation == 4) {
-            // Step Backward (Once: 90 -> 45 -> 135 -> 90)
+            // Step Backward (Once)
             if (anim_state == 0) {
-                anim_pos -= 5;
-                if (anim_pos <= 45) anim_state = 1;
+                anim_pos -= 4;
+                if (anim_pos <= 50) anim_state = 1;
             } else if (anim_state == 1) {
-                anim_pos += 5;
-                if (anim_pos >= 135) anim_state = 2;
+                anim_pos += 4;
+                if (anim_pos >= 130) anim_state = 2;
             } else if (anim_state == 2) {
-                anim_pos -= 5;
+                anim_pos -= 4;
                 if (anim_pos <= 90) {
                     anim_pos = 90;
-                    active_animation = 0; // Terminate animation (return to idle)
+                    active_animation = 0; // Terminate animation
                 }
             }
             
-            target_low_left = anim_pos;
-            target_high_right = anim_pos;
             target_high_left = anim_pos;
             target_low_right = anim_pos;
+            target_high_right = 180 - anim_pos;
+            target_low_left = 180 - anim_pos;
+            
             apply_all_servos();
             vTaskDelay(pdMS_TO_TICKS(20));
             

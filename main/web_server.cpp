@@ -46,9 +46,10 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         .pass-container input { margin-bottom: 0; }
         #status { font-weight: bold; color: #16a085; text-align: center; margin-top: 10px; }
         #lock_banner { display: none; background: #e74c3c; color: white; padding: 12px; border-radius: 8px; text-align: center; font-weight: bold; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(231, 76, 60, 0.3); }
-        .locked-mode .ctrl-group, .locked-mode .btn-grid button { opacity: 0.6; pointer-events: none; }
+        .locked-mode .ctrl-group, .locked-mode .btn-grid button, .locked-mode .sync-header { opacity: 0.6; pointer-events: none; }
         .btn-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
         .btn-stop { background: #e74c3c !important; } .btn-stop:hover { background: #c0392b !important; }
+        .sync-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
     </style>
 </head>
 <body>
@@ -89,6 +90,11 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
             <button onclick='doAction("stand")' style='background:#f39c12;'>Stand Up</button>
             <button onclick='doAction("stretch_down")' style='background:#9b59b6;'>Stretch Down</button>
             <button onclick='doAction("stretch_back")' style='background:#9b59b6;'>Stretch Back</button>
+        </div>
+
+        <div class='sync-header'>
+            <h3 style='margin:0; font-size: 16px; color: #34495e;'>Manual Joint Control</h3>
+            <button id='btn_sync' onclick='toggleSync()' style='width: auto; background: #95a5a6; padding: 8px 15px; margin: 0;'>🔗 Sync Legs: OFF</button>
         </div>
 
         <div class='grid'>
@@ -196,6 +202,7 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
 
 <script>
     let localSensorEnabled = false; 
+    let syncEnabled = false;
     let servoTimeouts = {}; 
     let allCalibrations = {};
     let activeDrag = null;
@@ -211,6 +218,29 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
 
     function dragStart(id) { activeDrag = id; }
     function dragEnd() { activeDrag = null; }
+
+    function toggleSync() {
+        syncEnabled = !syncEnabled;
+        let btn = document.getElementById('btn_sync');
+        if (syncEnabled) {
+            btn.innerText = "🔗 Sync Legs: ON";
+            btn.style.background = "#27ae60";
+        } else {
+            btn.innerText = "🔗 Sync Legs: OFF";
+            btn.style.background = "#95a5a6";
+        }
+    }
+
+    function isDragging(leg) {
+        if (leg === activeDrag) return true;
+        if (syncEnabled && activeDrag) {
+            if (activeDrag === 'high_left' && leg === 'high_right') return true;
+            if (activeDrag === 'high_right' && leg === 'high_left') return true;
+            if (activeDrag === 'low_left' && leg === 'low_right') return true;
+            if (activeDrag === 'low_right' && leg === 'low_left') return true;
+        }
+        return false;
+    }
 
     function fetchCalibrations() {
         fetch('/calibrations_json').then(r => r.json()).then(data => {
@@ -299,6 +329,27 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         servoTimeouts[id] = setTimeout(() => {
             fetchJSON('/servo', {id: id, angle: parseInt(angle)});
         }, 50); 
+        
+        if (syncEnabled) {
+            let pairedId = null;
+            if (id === 'high_left') pairedId = 'high_right';
+            else if (id === 'high_right') pairedId = 'high_left';
+            else if (id === 'low_left') pairedId = 'low_right';
+            else if (id === 'low_right') pairedId = 'low_left';
+
+            if (pairedId) {
+                let pairedEl = document.getElementById(pairedId);
+                // Ensure we don't trigger an infinite recursive cascade
+                if (pairedEl.value !== angle) {
+                    pairedEl.value = angle;
+                    document.getElementById('val_' + pairedId).innerHTML = angle + '&deg;';
+                    clearTimeout(servoTimeouts[pairedId]);
+                    servoTimeouts[pairedId] = setTimeout(() => {
+                        fetchJSON('/servo', {id: pairedId, angle: parseInt(angle)});
+                    }, 50);
+                }
+            }
+        }
     }
 
     function toggleSensor() {
@@ -351,8 +402,8 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
                 for (let [leg, stats] of Object.entries(data)) {
                     if (typeof stats === 'object') {
                         let el = document.getElementById(leg);
-                        // Update slider values ONLY if the user isn't currently dragging them
-                        if(el && (leg !== activeDrag || data.safety_lock)) { 
+                        // Update slider values ONLY if the user isn't currently dragging them or their synced pair
+                        if(el && (!isDragging(leg) || data.safety_lock)) { 
                             el.value = stats.angle; 
                             document.getElementById('val_' + leg).innerHTML = stats.angle + '&deg;'; 
                         }
