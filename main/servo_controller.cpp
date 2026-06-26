@@ -41,7 +41,7 @@ static int wait_counter = 0;
 static int32_t offset_low_left   = 0;
 static int32_t offset_high_right = 0;
 static int32_t offset_high_left  = 0;
-static int32_t offset_low_right  = 9; // Default safe motor offset for Low Right Leg
+static int32_t offset_low_right  = 11; // Default safe motor offset for Low Right Leg
 
 struct Pose { int32_t ll, hr, hl, lr; };
 // Unified Logical Coordinates: 0 is always facing Left, 180 is always facing Right.
