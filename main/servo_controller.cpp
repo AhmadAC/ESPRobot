@@ -27,7 +27,7 @@ static int32_t target_high_right = 90;
 static int32_t target_high_left  = 90;
 static int32_t target_low_right  = 90;
 
-static int active_animation = 0; // 0=None, 1=Walk Forward, 2=Walk Back, 3=Step Forward, 4=Step Back, 5=Left Wave, 6=Right Wave, 7=Crawl, 8=SitToStandTransition
+static int active_animation = 0; // 0=None, 1=Walk Forward, 2=Walk Back, 3=Step Forward, 4=Step Back, 5=Left Wave, 6=Right Wave, 7=Crawl, 8=SitToStand, 9=BackLeftWave, 10=BackRightWave
 static int anim_state = 0;
 static int anim_pos = 90;
 static int wait_counter = 0;
@@ -95,7 +95,7 @@ static void servo_animation_task(void *pv) {
     while(1) {
         if (sensor_is_safety_locked()) {
             // Cancel active locomotion loops instantly if safe zone is violated
-            if (active_animation >= 1 && active_animation <= 8) {
+            if (active_animation >= 1 && active_animation <= 10) {
                 active_animation = 0;
                 servo_set_action_bypass(sensor_get_tripped_action());
             }
@@ -322,6 +322,70 @@ static void servo_animation_task(void *pv) {
             }
             vTaskDelay(pdMS_TO_TICKS(20));
             
+        } else if (active_animation == 9) {
+            // Back Left Wave (Low Left / IO12 rotates 90 -> 180 -> 0 3 times, then back to 90)
+            int step = 20; 
+            if (anim_state == 0) {
+                anim_pos += step;
+                if (anim_pos >= 180) { anim_pos = 180; anim_state = 1; }
+            } else if (anim_state == 1) {
+                anim_pos -= step;
+                if (anim_pos <= 0) { anim_pos = 0; anim_state = 2; }
+            } else if (anim_state == 2) {
+                anim_pos += step;
+                if (anim_pos >= 180) { anim_pos = 180; anim_state = 3; }
+            } else if (anim_state == 3) {
+                anim_pos -= step;
+                if (anim_pos <= 0) { anim_pos = 0; anim_state = 4; }
+            } else if (anim_state == 4) {
+                anim_pos += step;
+                if (anim_pos >= 180) { anim_pos = 180; anim_state = 5; }
+            } else if (anim_state == 5) {
+                anim_pos -= step;
+                if (anim_pos <= 0) { anim_pos = 0; anim_state = 6; }
+            } else if (anim_state == 6) {
+                anim_pos += step;
+                if (anim_pos >= 90) { 
+                    anim_pos = 90; 
+                    active_animation = 0; 
+                }
+            }
+            target_low_left = anim_pos;
+            apply_all_servos();
+            vTaskDelay(pdMS_TO_TICKS(15));
+
+        } else if (active_animation == 10) {
+            // Back Right Wave (Low Right / IO9 rotates 90 -> 180 -> 0 3 times, then back to 90)
+            int step = 20; 
+            if (anim_state == 0) {
+                anim_pos += step;
+                if (anim_pos >= 180) { anim_pos = 180; anim_state = 1; }
+            } else if (anim_state == 1) {
+                anim_pos -= step;
+                if (anim_pos <= 0) { anim_pos = 0; anim_state = 2; }
+            } else if (anim_state == 2) {
+                anim_pos += step;
+                if (anim_pos >= 180) { anim_pos = 180; anim_state = 3; }
+            } else if (anim_state == 3) {
+                anim_pos -= step;
+                if (anim_pos <= 0) { anim_pos = 0; anim_state = 4; }
+            } else if (anim_state == 4) {
+                anim_pos += step;
+                if (anim_pos >= 180) { anim_pos = 180; anim_state = 5; }
+            } else if (anim_state == 5) {
+                anim_pos -= step;
+                if (anim_pos <= 0) { anim_pos = 0; anim_state = 6; }
+            } else if (anim_state == 6) {
+                anim_pos += step;
+                if (anim_pos >= 90) { 
+                    anim_pos = 90; 
+                    active_animation = 0; 
+                }
+            }
+            target_low_right = anim_pos;
+            apply_all_servos();
+            vTaskDelay(pdMS_TO_TICKS(15));
+
         } else {
             vTaskDelay(pdMS_TO_TICKS(50)); // Idle wait
         }
@@ -390,6 +454,21 @@ void servo_set_target(const char* id, int angle) {
     apply_all_servos();
 }
 
+void servo_set_target_silent(const char* id, int angle) {
+    if (sensor_is_safety_locked()) return;
+    active_animation = 0; // Manual override stops animations
+    
+    if (strcmp(id, "low_left") == 0)   target_low_left = angle;
+    if (strcmp(id, "high_right") == 0) target_high_right = angle;
+    if (strcmp(id, "high_left") == 0)  target_high_left = angle;
+    if (strcmp(id, "low_right") == 0)  target_low_right = angle;
+}
+
+void servo_apply_targets() {
+    if (sensor_is_safety_locked()) return;
+    apply_all_servos();
+}
+
 void servo_set_action(const char* action_name) {
     if (sensor_is_safety_locked()) return; // Rejects manual command requests during safe lockout
     servo_set_action_bypass(action_name);
@@ -450,6 +529,16 @@ void servo_set_action_bypass(const char* action_name) {
             target_low_right  = poses[1].lr;
             apply_all_servos();
         }
+    } else if (strcmp(action_name, "back_left_wave") == 0) {
+        active_animation = 9;
+        anim_state = 0;
+        anim_pos = 90;
+        wait_counter = 0;
+    } else if (strcmp(action_name, "back_right_wave") == 0) {
+        active_animation = 10;
+        anim_state = 0;
+        anim_pos = 90;
+        wait_counter = 0;
     } else if (strcmp(action_name, "none") == 0) {
         // Explicitly configured to do nothing
     } else {

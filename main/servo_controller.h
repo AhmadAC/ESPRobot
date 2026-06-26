@@ -4,6 +4,8 @@
 
 void servo_controller_init();
 void servo_set_target(const char* id, int angle);
+void servo_set_target_silent(const char* id, int angle);
+void servo_apply_targets();
 void servo_set_action(const char* action_name);
 void servo_set_action_bypass(const char* action_name);
 void servo_get_angles(int* ll, int* hr, int* hl, int* lr);

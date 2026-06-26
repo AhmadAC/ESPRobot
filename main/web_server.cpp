@@ -7,6 +7,7 @@
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "nvs.h"
 #include <string.h>
 
 static const char *TAG = "WEB";
@@ -87,6 +88,8 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
             <button onclick='doAction("step_backward")' style='background:#1abc9c;'>Step Backward</button>
             <button onclick='doAction("left_wave")' style='background:#9b59b6;'>Left Wave</button>
             <button onclick='doAction("right_wave")' style='background:#9b59b6;'>Right Wave</button>
+            <button onclick='doAction("back_left_wave")' style='background:#9b59b6;'>Back Left Wave</button>
+            <button onclick='doAction("back_right_wave")' style='background:#9b59b6;'>Back Right Wave</button>
             <button onclick='doAction("crawl")' style='background:#d35400;'>Forward Crawl</button>
             <button class='btn-stop' onclick='doAction("stop")'>STOP</button>
             <button onclick='doAction("sit")' style='background:#f39c12;'>Sit</button>
@@ -106,7 +109,7 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
                 <div class='ctrl-header'><span>Low Left Leg (IO12)</span><span id='val_low_left'>90&deg;</span></div>
                 <input type='range' class='srv-slider' id='low_left' min='0' max='180' value='90' oninput='moveServo("low_left", this.value)' onmousedown='dragStart("low_left")' onmouseup='dragEnd()' ontouchstart='dragStart("low_left")' ontouchend='dragEnd()'>
             </div>
-            <!-- Row 1 Right Column: IO11 (Moved to first row, matches physical high Left Shoulder) -->
+            <!-- Row 1 Right Column: IO11 -->
             <div class='ctrl-group'>
                 <div class='ctrl-header'><span>High Left Shoulder (IO11)</span><span id='val_high_left'>90&deg;</span></div>
                 <input type='range' class='srv-slider' id='high_left' min='0' max='180' value='90' oninput='moveServo("high_left", this.value)' onmousedown='dragStart("high_left")' onmouseup='dragEnd()' ontouchstart='dragStart("high_left")' ontouchend='dragEnd()'>
@@ -116,7 +119,7 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
                 <div class='ctrl-header'><span>Low Right Leg (IO9)</span><span id='val_low_right'>90&deg;</span></div>
                 <input type='range' class='srv-slider' id='low_right' min='0' max='180' value='90' oninput='moveServo("low_right", this.value)' onmousedown='dragStart("low_right")' onmouseup='dragEnd()' ontouchstart='dragStart("low_right")' ontouchend='dragEnd()'>
             </div>
-            <!-- Row 2 Right Column: IO10 (Moved to second row, matches physical high Right Shoulder) -->
+            <!-- Row 2 Right Column: IO10 -->
             <div class='ctrl-group'>
                 <div class='ctrl-header'><span>High Right Shoulder (IO10)</span><span id='val_high_right'>90&deg;</span></div>
                 <input type='range' class='srv-slider' id='high_right' min='0' max='180' value='90' oninput='moveServo("high_right", this.value)' onmousedown='dragStart("high_right")' onmouseup='dragEnd()' ontouchstart='dragStart("high_right")' ontouchend='dragEnd()'>
@@ -138,6 +141,7 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
                     <option value='stop'>6. Pose: Stop (Default)</option>
                 </select>
                 <p style='font-size: 11px; color: #7f8c8d; margin-top:5px;'>First, use Hardware Zeroing to make all motors physically 90&deg;. Then calibrate your custom limits for the individual buttons.</p>
+                <button style='background: #e74c3c; margin-top: 15px;' onclick='resetCal()'>Reset NVS to Firmware Defaults</button>
             </div>
             <div class='ctrl-group' style='border-left-color: #34495e; text-align:center;'>
                 <p style='margin-top:0; font-size:13px; font-weight:bold;'>Compile Defaults into Firmware</p>
@@ -190,6 +194,8 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
                     <option value='step_backward'>Step Backward</option>
                     <option value='left_wave'>Left Wave</option>
                     <option value='right_wave'>Right Wave</option>
+                    <option value='back_left_wave'>Back Left Wave</option>
+                    <option value='back_right_wave'>Back Right Wave</option>
                     <option value='crawl'>Forward Crawl</option>
                     <option value='sit'>Sit</option>
                     <option value='stand'>Stand Up</option>
@@ -208,6 +214,8 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
                     <option value='step_backward'>Step Backward</option>
                     <option value='left_wave'>Left Wave</option>
                     <option value='right_wave'>Right Wave</option>
+                    <option value='back_left_wave'>Back Left Wave</option>
+                    <option value='back_right_wave'>Back Right Wave</option>
                     <option value='crawl'>Forward Crawl</option>
                     <option value='stop'>Stop</option>
                     <option value='sit'>Sit</option>
@@ -309,6 +317,14 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
 
     function downloadCalib() { window.location.href = '/download_cal'; }
 
+    function resetCal() {
+        if (confirm("Are you sure you want to clear NVS storage? This will clear custom poses/offsets and reboot to reload firmware defaults.")) {
+            fetchJSON('/reset_cal', {}).then(() => {
+                alert("NVS partitions erased successfully. Robot is now rebooting...");
+            });
+        }
+    }
+
     function scan() {
         document.getElementById('status').innerText = 'Scanning Wi-Fi...';
         fetch('/scan').then(r => r.json()).then(d => {
@@ -344,12 +360,8 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
     function moveServo(id, angle) {
         document.getElementById('val_' + id).innerHTML = angle + '&deg;';
         
-        // Debounce inputs: clears the previous pending fetch if the user is still dragging
-        // This drops intermediate frames and immediately snaps to the final location without lag
-        clearTimeout(servoTimeouts[id]);
-        servoTimeouts[id] = setTimeout(() => {
-            fetchJSON('/servo', {id: id, angle: parseInt(angle)});
-        }, 50); 
+        let payload = {};
+        payload[legMap[id]] = parseInt(angle);
         
         if (syncEnabled) {
             let pairedId = null;
@@ -364,13 +376,16 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
                 if (pairedEl.value !== angle) {
                     pairedEl.value = angle;
                     document.getElementById('val_' + pairedId).innerHTML = angle + '&deg;';
-                    clearTimeout(servoTimeouts[pairedId]);
-                    servoTimeouts[pairedId] = setTimeout(() => {
-                        fetchJSON('/servo', {id: pairedId, angle: parseInt(angle)});
-                    }, 50);
+                    payload[legMap[pairedId]] = parseInt(angle);
                 }
             }
         }
+
+        // Single debounced call that sends the combined state of both matched sliders in a single packet!
+        clearTimeout(servoTimeouts['bulk']);
+        servoTimeouts['bulk'] = setTimeout(() => {
+            fetchJSON('/servo', payload);
+        }, 30);
     }
 
     function toggleSensor() {
@@ -541,9 +556,21 @@ static esp_err_t save_post_handler(httpd_req_t *req) {
 static esp_err_t servo_post_handler(httpd_req_t *req) {
     cJSON *json = NULL;
     if (get_post_json(req, &json) == ESP_OK) {
+        cJSON *ll = cJSON_GetObjectItem(json, "ll");
+        cJSON *lr = cJSON_GetObjectItem(json, "lr");
+        cJSON *hl = cJSON_GetObjectItem(json, "hl");
+        cJSON *hr = cJSON_GetObjectItem(json, "hr");
+        
         cJSON *id_item = cJSON_GetObjectItem(json, "id");
         cJSON *angle_item = cJSON_GetObjectItem(json, "angle");
-        if (id_item && angle_item) {
+        
+        if (ll || lr || hl || hr) {
+            if (ll) servo_set_target_silent("low_left", ll->valueint);
+            if (lr) servo_set_target_silent("low_right", lr->valueint);
+            if (hl) servo_set_target_silent("high_left", hl->valueint);
+            if (hr) servo_set_target_silent("high_right", hr->valueint);
+            servo_apply_targets();
+        } else if (id_item && angle_item) {
             servo_set_target(id_item->valuestring, angle_item->valueint);
         }
         cJSON_Delete(json);
@@ -659,6 +686,19 @@ static esp_err_t angles_get_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+static esp_err_t reset_cal_post_handler(httpd_req_t *req) {
+    nvs_handle_t my_handle;
+    if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
+        nvs_erase_all(my_handle);
+        nvs_commit(my_handle);
+        nvs_close(my_handle);
+        ESP_LOGW(TAG, "NVS Storage Erased. Rebooting...");
+    }
+    xTaskCreate(delayed_reboot_task, "reboot_task", 2048, NULL, 5, NULL);
+    httpd_resp_sendstr(req, "OK");
+    return ESP_OK;
+}
+
 // Graceful Favicon Handler to suppress missing /favicon.ico logging pollution
 static esp_err_t favicon_get_handler(httpd_req_t *req) {
     httpd_resp_set_type(req, "image/x-icon");
@@ -672,7 +712,7 @@ void web_server_init() {
         httpd_config_t config = HTTPD_DEFAULT_CONFIG();
         
         // Optimize configuration for swift request processing and thread isolation
-        config.max_uri_handlers = 12;
+        config.max_uri_handlers = 13;
         config.core_id = 1;                             // Restrict the HTTP server strictly to Core 1
         config.task_priority = 5;                       // Standardized to baseline HTTP daemon logic
         config.stack_size = 8192;                       // Guarantee stack space for processing JSON inputs safely
@@ -682,17 +722,18 @@ void web_server_init() {
         config.send_wait_timeout = 3;                   // Swift socket release on slow transfers
         
         if (httpd_start(&server, &config) == ESP_OK) {
-            httpd_uri_t uri_index   = { .uri = "/", .method = HTTP_GET, .handler = index_get_handler, .user_ctx = NULL };
-            httpd_uri_t uri_scan    = { .uri = "/scan", .method = HTTP_GET, .handler = scan_get_handler, .user_ctx = NULL };
-            httpd_uri_t uri_save    = { .uri = "/save", .method = HTTP_POST, .handler = save_post_handler, .user_ctx = NULL };
-            httpd_uri_t uri_servo   = { .uri = "/servo", .method = HTTP_POST, .handler = servo_post_handler, .user_ctx = NULL };
-            httpd_uri_t uri_act     = { .uri = "/action", .method = HTTP_POST, .handler = action_post_handler, .user_ctx = NULL };
-            httpd_uri_t uri_cal     = { .uri = "/calibrate", .method = HTTP_POST, .handler = calibrate_post_handler, .user_ctx = NULL };
-            httpd_uri_t uri_caljson = { .uri = "/calibrations_json", .method = HTTP_GET, .handler = calibrations_json_get_handler, .user_ctx = NULL };
-            httpd_uri_t uri_dlcal   = { .uri = "/download_cal", .method = HTTP_GET, .handler = download_cal_get_handler, .user_ctx = NULL };
-            httpd_uri_t uri_angs    = { .uri = "/angles", .method = HTTP_GET, .handler = angles_get_handler, .user_ctx = NULL };
-            httpd_uri_t uri_sensor  = { .uri = "/sensor", .method = HTTP_POST, .handler = sensor_post_handler, .user_ctx = NULL };
-            httpd_uri_t uri_favicon = { .uri = "/favicon.ico", .method = HTTP_GET, .handler = favicon_get_handler, .user_ctx = NULL };
+            httpd_uri_t uri_index    = { .uri = "/", .method = HTTP_GET, .handler = index_get_handler, .user_ctx = NULL };
+            httpd_uri_t uri_scan     = { .uri = "/scan", .method = HTTP_GET, .handler = scan_get_handler, .user_ctx = NULL };
+            httpd_uri_t uri_save     = { .uri = "/save", .method = HTTP_POST, .handler = save_post_handler, .user_ctx = NULL };
+            httpd_uri_t uri_servo    = { .uri = "/servo", .method = HTTP_POST, .handler = servo_post_handler, .user_ctx = NULL };
+            httpd_uri_t uri_act      = { .uri = "/action", .method = HTTP_POST, .handler = action_post_handler, .user_ctx = NULL };
+            httpd_uri_t uri_cal      = { .uri = "/calibrate", .method = HTTP_POST, .handler = calibrate_post_handler, .user_ctx = NULL };
+            httpd_uri_t uri_caljson  = { .uri = "/calibrations_json", .method = HTTP_GET, .handler = calibrations_json_get_handler, .user_ctx = NULL };
+            httpd_uri_t uri_dlcal    = { .uri = "/download_cal", .method = HTTP_GET, .handler = download_cal_get_handler, .user_ctx = NULL };
+            httpd_uri_t uri_angs     = { .uri = "/angles", .method = HTTP_GET, .handler = angles_get_handler, .user_ctx = NULL };
+            httpd_uri_t uri_sensor   = { .uri = "/sensor", .method = HTTP_POST, .handler = sensor_post_handler, .user_ctx = NULL };
+            httpd_uri_t uri_resetcal = { .uri = "/reset_cal", .method = HTTP_POST, .handler = reset_cal_post_handler, .user_ctx = NULL };
+            httpd_uri_t uri_favicon  = { .uri = "/favicon.ico", .method = HTTP_GET, .handler = favicon_get_handler, .user_ctx = NULL };
             
             httpd_register_uri_handler(server, &uri_index);
             httpd_register_uri_handler(server, &uri_scan);
@@ -704,6 +745,7 @@ void web_server_init() {
             httpd_register_uri_handler(server, &uri_dlcal);
             httpd_register_uri_handler(server, &uri_angs);
             httpd_register_uri_handler(server, &uri_sensor);
+            httpd_register_uri_handler(server, &uri_resetcal);
             httpd_register_uri_handler(server, &uri_favicon);
             
             ESP_LOGI(TAG, "Dashboard Server initialized successfully on port %d", config.server_port);
