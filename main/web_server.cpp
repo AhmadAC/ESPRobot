@@ -1,3 +1,5 @@
+#################### START OF FILE: main\web_server.cpp ####################
+
 #include "web_server.h"
 #include "wifi_manager.h"
 #include "sensor_monitor.h"
@@ -180,9 +182,16 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
                 <label>Action When Tripped (Obstacle Detected):</label>
                 <select id='sensor_tripped_action' onchange='sendSensorConfig()'>
                     <option value='stop'>Stop (Default)</option>
+                    <option value='forward'>Walk Forward</option>
+                    <option value='backward'>Walk Backward</option>
+                    <option value='step_forward'>Step Forward</option>
+                    <option value='step_backward'>Step Backward</option>
+                    <option value='left_wave'>Left Wave</option>
+                    <option value='right_wave'>Right Wave</option>
+                    <option value='crawl'>Forward Crawl</option>
                     <option value='sit'>Sit</option>
                     <option value='stand'>Stand Up</option>
-                    <option value='stretch_down'>Stretch Down (Lean Forward)</option>
+                    <option value='stretch_down'>Stretch Down</option>
                     <option value='stretch_back'>Stretch Back</option>
                     <option value='none'>None (Do nothing)</option>
                 </select>
@@ -191,9 +200,16 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
                 <label>Action When Cleared (Obstacle Removed):</label>
                 <select id='sensor_cleared_action' onchange='sendSensorConfig()'>
                     <option value='stand'>Stand Up</option>
+                    <option value='forward'>Walk Forward</option>
+                    <option value='backward'>Walk Backward</option>
+                    <option value='step_forward'>Step Forward</option>
+                    <option value='step_backward'>Step Backward</option>
+                    <option value='left_wave'>Left Wave</option>
+                    <option value='right_wave'>Right Wave</option>
+                    <option value='crawl'>Forward Crawl</option>
                     <option value='stop'>Stop</option>
                     <option value='sit'>Sit</option>
-                    <option value='stretch_down'>Stretch Down (Lean Forward)</option>
+                    <option value='stretch_down'>Stretch Down</option>
                     <option value='stretch_back'>Stretch Back</option>
                     <option value='none'>None (Do nothing)</option>
                 </select>
