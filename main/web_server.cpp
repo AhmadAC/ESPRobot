@@ -1,5 +1,3 @@
-#################### START OF FILE: main\web_server.cpp ####################
-
 #include "web_server.h"
 #include "wifi_manager.h"
 #include "sensor_monitor.h"

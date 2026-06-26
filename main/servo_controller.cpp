@@ -91,6 +91,18 @@ static bool current_is_sit() {
             target_low_right == poses[0].lr);
 }
 
+// Gradually shifts a current angle value toward a target value by a fixed step size
+static int32_t approach(int32_t current, int32_t target, int32_t step) {
+    if (current < target) {
+        current += step;
+        if (current > target) current = target;
+    } else if (current > target) {
+        current -= step;
+        if (current < target) current = target;
+    }
+    return current;
+}
+
 static void servo_animation_task(void *pv) {
     while(1) {
         if (sensor_is_safety_locked()) {
@@ -280,31 +292,46 @@ static void servo_animation_task(void *pv) {
             
         } else if (active_animation == 8) {
             // Asynchronous Transition Sequence: Sit -> Stretch Back -> Stand (Prevents Tipping Over)
+            // Utilizes slow, smooth interpolation to prevent the robot from flipping over.
+            const int32_t step_speed = 2; // Degrees of movement per 20ms frame cycle
+            
             if (anim_state == 0) {
-                // Step 1: Immediately transition to Stretch Back pose to align gravity
-                target_low_left   = poses[3].ll;
-                target_high_right = poses[3].hr;
-                target_high_left  = poses[3].hl;
-                target_low_right  = poses[3].lr;
+                // Step 1: Smoothly transition to Stretch Back pose (focusing on high legs)
+                target_low_left   = approach(target_low_left,   poses[3].ll, step_speed);
+                target_high_right = approach(target_high_right, poses[3].hr, step_speed);
+                target_high_left  = approach(target_high_left,  poses[3].hl, step_speed);
+                target_low_right  = approach(target_low_right,  poses[3].lr, step_speed);
                 apply_all_servos();
                 
-                anim_state = 1;
-                wait_counter = 0;
+                // Advance when the targets match the Stretch Back coordinates
+                if (target_low_left == poses[3].ll &&
+                    target_high_right == poses[3].hr &&
+                    target_high_left == poses[3].hl &&
+                    target_low_right == poses[3].lr) {
+                    anim_state = 1;
+                    wait_counter = 0;
+                }
             } else if (anim_state == 1) {
-                // Step 2: Hold Stretch Back pose for 1 second (50 frames * 20ms = 1000ms)
+                // Step 2: Hold Stretch Back pose for 600ms (30 frames * 20ms) to settle gravity
                 wait_counter++;
-                if (wait_counter >= 50) {
+                if (wait_counter >= 30) {
                     anim_state = 2;
                 }
             } else if (anim_state == 2) {
-                // Step 3: Transition to Stand pose
-                target_low_left   = poses[1].ll;
-                target_high_right = poses[1].hr;
-                target_high_left  = poses[1].hl;
-                target_low_right  = poses[1].lr;
+                // Step 3: Smoothly transition from Stretch Back to Stand pose
+                target_low_left   = approach(target_low_left,   poses[1].ll, step_speed);
+                target_high_right = approach(target_high_right, poses[1].hr, step_speed);
+                target_high_left  = approach(target_high_left,  poses[1].hl, step_speed);
+                target_low_right  = approach(target_low_right,  poses[1].lr, step_speed);
                 apply_all_servos();
                 
-                active_animation = 0; // Transition complete, idle
+                // End animation loop once the target Stand pose coordinates are matched
+                if (target_low_left == poses[1].ll &&
+                    target_high_right == poses[1].hr &&
+                    target_high_left == poses[1].hl &&
+                    target_low_right == poses[1].lr) {
+                    active_animation = 0; // Transition complete, return to idle
+                }
             }
             vTaskDelay(pdMS_TO_TICKS(20));
             
