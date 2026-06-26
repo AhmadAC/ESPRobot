@@ -16,7 +16,8 @@ The script assigns physical GPIO pins to the robot's hardware components:
 * **`GPIO 10` (High Right Shoulder)** $\rightarrow$ LEDC Channel 1
 * **`GPIO 11` (High Left Shoulder)** $\rightarrow$ LEDC Channel 2
 * **`GPIO 9` (Low Right Leg)** $\rightarrow$ LEDC Channel 3
-* **`GPIO 4` (Ultrasonic Trig)** & **`GPIO 5` (Ultrasonic Echo)** (allocated for distance sensing)
+* **`GPIO 4` (Ultrasonic Trig)**
+* **`GPIO 5` (Ultrasonic Echo)** (allocated for distance sensing)
 
 #### B. Hardware-Accelerated PWM Driver (`write_servo_calibrated`)
 Standard hobby servos require a repeating pulse frame at **50Hz** (20ms period). Instead of using standard processor-intensive delay loops, the code configures the ESP32-S3’s hardware **LEDC (LED Controller)** peripheral:

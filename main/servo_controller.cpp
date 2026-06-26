@@ -27,7 +27,7 @@ static int32_t target_high_right = 90;
 static int32_t target_high_left  = 90;
 static int32_t target_low_right  = 90;
 
-static int active_animation = 0; // 0=None, 1=Walk Forward, 2=Walk Back, 3=Step Forward, 4=Step Back
+static int active_animation = 0; // 0=None, 1=Walk Forward, 2=Walk Back, 3=Step Forward, 4=Step Back, 5=Left Wave, 6=Right Wave, 7=Crawl
 static int anim_state = 0;
 static int anim_pos = 90;
 static int wait_counter = 0;
@@ -80,8 +80,8 @@ static void apply_all_servos() {
 static void servo_animation_task(void *pv) {
     while(1) {
         if (sensor_is_safety_locked()) {
-            // Cancel active locomotion loops instantly if safe zone is violated
-            if (active_animation == 1 || active_animation == 2 || active_animation == 3 || active_animation == 4) {
+            // Cancel active loops instantly if safe zone is violated (IDs 1 through 7)
+            if (active_animation >= 1 && active_animation <= 7) {
                 active_animation = 0;
                 servo_set_action_bypass(sensor_get_tripped_action());
             }
@@ -175,6 +175,91 @@ static void servo_animation_task(void *pv) {
             target_low_right = anim_pos;
             target_high_right = 180 - anim_pos;
             target_low_left = 180 - anim_pos;
+            
+            apply_all_servos();
+            vTaskDelay(pdMS_TO_TICKS(20));
+            
+        } else if (active_animation == 5) {
+            // Left Wave (High Left rotates 90 -> 180 -> 0 3 times, then back to 90 as fast as possible)
+            int step = 20; // Fast angular change
+            if (anim_state == 0) { // Cycle 1 Ascent
+                anim_pos += step;
+                if (anim_pos >= 180) { anim_pos = 180; anim_state = 1; }
+            } else if (anim_state == 1) { // Cycle 1 Descent
+                anim_pos -= step;
+                if (anim_pos <= 0) { anim_pos = 0; anim_state = 2; }
+            } else if (anim_state == 2) { // Cycle 2 Ascent
+                anim_pos += step;
+                if (anim_pos >= 180) { anim_pos = 180; anim_state = 3; }
+            } else if (anim_state == 3) { // Cycle 2 Descent
+                anim_pos -= step;
+                if (anim_pos <= 0) { anim_pos = 0; anim_state = 4; }
+            } else if (anim_state == 4) { // Cycle 3 Ascent
+                anim_pos += step;
+                if (anim_pos >= 180) { anim_pos = 180; anim_state = 5; }
+            } else if (anim_state == 5) { // Cycle 3 Descent
+                anim_pos -= step;
+                if (anim_pos <= 0) { anim_pos = 0; anim_state = 6; }
+            } else if (anim_state == 6) { // Return to neutral stand
+                anim_pos += step;
+                if (anim_pos >= 90) { 
+                    anim_pos = 90; 
+                    active_animation = 0; // Stop and complete
+                }
+            }
+            target_high_left = anim_pos;
+            apply_all_servos();
+            vTaskDelay(pdMS_TO_TICKS(15)); // Fast frame update interval
+            
+        } else if (active_animation == 6) {
+            // Right Wave (High Right rotates 90 -> 180 -> 0 3 times, then back to 90 as fast as possible)
+            int step = 20; 
+            if (anim_state == 0) { // Cycle 1 Ascent
+                anim_pos += step;
+                if (anim_pos >= 180) { anim_pos = 180; anim_state = 1; }
+            } else if (anim_state == 1) { // Cycle 1 Descent
+                anim_pos -= step;
+                if (anim_pos <= 0) { anim_pos = 0; anim_state = 2; }
+            } else if (anim_state == 2) { // Cycle 2 Ascent
+                anim_pos += step;
+                if (anim_pos >= 180) { anim_pos = 180; anim_state = 3; }
+            } else if (anim_state == 3) { // Cycle 2 Descent
+                anim_pos -= step;
+                if (anim_pos <= 0) { anim_pos = 0; anim_state = 4; }
+            } else if (anim_state == 4) { // Cycle 3 Ascent
+                anim_pos += step;
+                if (anim_pos >= 180) { anim_pos = 180; anim_state = 5; }
+            } else if (anim_state == 5) { // Cycle 3 Descent
+                anim_pos -= step;
+                if (anim_pos <= 0) { anim_pos = 0; anim_state = 6; }
+            } else if (anim_state == 6) { // Return to neutral stand
+                anim_pos += step;
+                if (anim_pos >= 90) { 
+                    anim_pos = 90; 
+                    active_animation = 0; // Stop and complete
+                }
+            }
+            target_high_right = anim_pos;
+            apply_all_servos();
+            vTaskDelay(pdMS_TO_TICKS(15));
+            
+        } else if (active_animation == 7) {
+            // Forward Crawl (Anchors low legs flat at 0, sweeps shoulders forward diagonally out of phase)
+            if (anim_state == 0) {
+                anim_pos += 5;
+                if (anim_pos >= 135) anim_state = 1;
+            } else if (anim_state == 1) {
+                anim_pos -= 5;
+                if (anim_pos <= 45) anim_state = 0;
+            }
+            
+            // Keep both low legs locked at 0 in a flat back-lean posture
+            target_low_left = 0;
+            target_low_right = 0;
+            
+            // Sweep front shoulders out of phase to slide the torso forward
+            target_high_left = anim_pos;
+            target_high_right = 180 - anim_pos;
             
             apply_all_servos();
             vTaskDelay(pdMS_TO_TICKS(20));
@@ -275,6 +360,21 @@ void servo_set_action_bypass(const char* action_name) {
         wait_counter = 0;
     } else if (strcmp(action_name, "step_backward") == 0) {
         active_animation = 4;
+        anim_state = 0;
+        anim_pos = 90;
+        wait_counter = 0;
+    } else if (strcmp(action_name, "left_wave") == 0) {
+        active_animation = 5;
+        anim_state = 0;
+        anim_pos = 90;
+        wait_counter = 0;
+    } else if (strcmp(action_name, "right_wave") == 0) {
+        active_animation = 6;
+        anim_state = 0;
+        anim_pos = 90;
+        wait_counter = 0;
+    } else if (strcmp(action_name, "crawl") == 0) {
+        active_animation = 7;
         anim_state = 0;
         anim_pos = 90;
         wait_counter = 0;

@@ -71,20 +71,23 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
                     <input type='password' id='pass' placeholder='Enter password'>
                     <input type='checkbox' onclick="let p=document.getElementById('pass'); p.type=(p.type==='password')?'text':'password';"> <small>Show</small>
                 </div>
-                <button style='background: #27ae60;' onclick='saveWiFi()'>Save & Reboot</button>
+                <button style='background: #27ae60;' onclick='saveWiFi()'>Save and Reboot</button>
             </div>
         </div>
     </div>
 
     <div class='card' id='servo_card'>
-        <h2>Robot Actions & Kinematics</h2>
-        <div id='lock_banner'>⚠️ MOTORS LOCKED: Obstacle Detected!</div>
+        <h2>Robot Actions and Kinematics</h2>
+        <div id='lock_banner'>WARNING: MOTORS LOCKED - Obstacle Detected!</div>
         
         <div class='btn-grid' style='margin-bottom: 25px;'>
             <button onclick='doAction("forward")'>Walk Forward</button>
             <button onclick='doAction("backward")'>Walk Backward</button>
             <button onclick='doAction("step_forward")' style='background:#1abc9c;'>Step Forward</button>
             <button onclick='doAction("step_backward")' style='background:#1abc9c;'>Step Backward</button>
+            <button onclick='doAction("left_wave")' style='background:#9b59b6;'>Left Wave</button>
+            <button onclick='doAction("right_wave")' style='background:#9b59b6;'>Right Wave</button>
+            <button onclick='doAction("crawl")' style='background:#d35400;'>Forward Crawl</button>
             <button class='btn-stop' onclick='doAction("stop")'>STOP</button>
             <button onclick='doAction("sit")' style='background:#f39c12;'>Sit</button>
             <button onclick='doAction("stand")' style='background:#f39c12;'>Stand Up</button>
@@ -94,7 +97,7 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
 
         <div class='sync-header'>
             <h3 style='margin:0; font-size: 16px; color: #34495e;'>Manual Joint Control</h3>
-            <button id='btn_sync' onclick='toggleSync()' style='width: auto; background: #95a5a6; padding: 8px 15px; margin: 0;'>🔗 Sync Legs: OFF</button>
+            <button id='btn_sync' onclick='toggleSync()' style='width: auto; background: #95a5a6; padding: 8px 15px; margin: 0;'>Sync Legs: OFF</button>
         </div>
 
         <div class='grid'>
@@ -118,7 +121,7 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
     </div>
 
     <div class='card'>
-        <h2>Pose Calibration & Hardware Zeroing</h2>
+        <h2>Pose Calibration and Hardware Zeroing</h2>
         <div class='grid'>
             <div class='ctrl-group' style='border-left-color: #e67e22;'>
                 <label>Target to Calibrate:</label>
@@ -135,7 +138,7 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
             <div class='ctrl-group' style='border-left-color: #34495e; text-align:center;'>
                 <p style='margin-top:0; font-size:13px; font-weight:bold;'>Compile Defaults into Firmware</p>
                 <p style='margin-top:0; font-size:11px; color:#7f8c8d;'>Save your finalized configuration to a C++ file to hardcode the settings securely for your next compile.</p>
-                <button style='background: #34495e; padding: 10px;' onclick='downloadCalib()'>⬇️ Download C++ Configuration</button>
+                <button style='background: #34495e; padding: 10px;' onclick='downloadCalib()'>Download C++ Configuration</button>
             </div>
         </div>
         <div class='grid' style='margin-top:15px;'>
@@ -153,7 +156,7 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
             </div>
         </div>
         <div class='grid' style='margin-top:15px;'>
-            <button style='background: #3498db;' onclick='testCalib()'>Test Pose / Offset</button>
+            <button style='background: #3498db;' onclick='testCalib()'>Test Pose or Offset</button>
             <button style='background: #e67e22;' onclick='saveCalib()'>Save to Robot NVS Storage</button>
         </div>
     </div>
@@ -223,10 +226,10 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         syncEnabled = !syncEnabled;
         let btn = document.getElementById('btn_sync');
         if (syncEnabled) {
-            btn.innerText = "🔗 Sync Legs: ON";
+            btn.innerText = "Sync Legs: ON";
             btn.style.background = "#27ae60";
         } else {
-            btn.innerText = "🔗 Sync Legs: OFF";
+            btn.innerText = "Sync Legs: OFF";
             btn.style.background = "#95a5a6";
         }
     }
@@ -281,7 +284,7 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
             lr: parseInt(document.getElementById('cal_lr').value) || 0,
             save: true
         }).then(()=> {
-            alert('Calibration Updated & Saved to ESP32 Storage!');
+            alert('Calibration Updated and Saved to ESP32 Storage!');
             fetchCalibrations();
         });
     }
@@ -638,6 +641,14 @@ static esp_err_t angles_get_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+// Graceful Favicon Handler to suppress missing /favicon.ico logging pollution
+static esp_err_t favicon_get_handler(httpd_req_t *req) {
+    httpd_resp_set_type(req, "image/x-icon");
+    httpd_resp_set_status(req, "204 No Content");
+    httpd_resp_send(req, NULL, 0);
+    return ESP_OK;
+}
+
 void web_server_init() {
     if (server == NULL) {
         httpd_config_t config = HTTPD_DEFAULT_CONFIG();
@@ -663,6 +674,7 @@ void web_server_init() {
             httpd_uri_t uri_dlcal   = { .uri = "/download_cal", .method = HTTP_GET, .handler = download_cal_get_handler, .user_ctx = NULL };
             httpd_uri_t uri_angs    = { .uri = "/angles", .method = HTTP_GET, .handler = angles_get_handler, .user_ctx = NULL };
             httpd_uri_t uri_sensor  = { .uri = "/sensor", .method = HTTP_POST, .handler = sensor_post_handler, .user_ctx = NULL };
+            httpd_uri_t uri_favicon = { .uri = "/favicon.ico", .method = HTTP_GET, .handler = favicon_get_handler, .user_ctx = NULL };
             
             httpd_register_uri_handler(server, &uri_index);
             httpd_register_uri_handler(server, &uri_scan);
@@ -674,6 +686,7 @@ void web_server_init() {
             httpd_register_uri_handler(server, &uri_dlcal);
             httpd_register_uri_handler(server, &uri_angs);
             httpd_register_uri_handler(server, &uri_sensor);
+            httpd_register_uri_handler(server, &uri_favicon);
             
             ESP_LOGI(TAG, "Dashboard Server initialized successfully on port %d", config.server_port);
         }

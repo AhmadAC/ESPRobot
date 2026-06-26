@@ -46,24 +46,40 @@ static float read_ultrasonic_distance() {
     gpio_set_level(ULTRASONIC_TRIG_PIN, 0);
 
     int64_t start_time = esp_timer_get_time();
-    int64_t timeout = 15000; // ~2.5 meters max range
+    int64_t start_timeout = 25000; // 25ms window to wait for Echo to start rising
     
+    // 1. Wait for Echo pin to go HIGH
     while (gpio_get_level(ULTRASONIC_ECHO_PIN) == 0) {
-        if (esp_timer_get_time() - start_time > timeout) return -1.0f;
+        if (esp_timer_get_time() - start_time > start_timeout) {
+            return -1.0f; // Timeout (indicates hardware/wiring issue)
+        }
     }
 
     int64_t echo_start = esp_timer_get_time();
+    int64_t echo_timeout = 40000; // Increased to 40ms to accommodate standard max-range behavior (38ms)
+    
+    // 2. Wait for Echo pin to fall back LOW
     while (gpio_get_level(ULTRASONIC_ECHO_PIN) == 1) {
-        if (esp_timer_get_time() - echo_start > timeout) return -1.0f;
+        if (esp_timer_get_time() - echo_start > echo_timeout) {
+            return -1.0f; // Timeout waiting for Echo to end
+        }
     }
     int64_t echo_end = esp_timer_get_time();
 
     int64_t duration = echo_end - echo_start;
-    return (float)duration / 58.0f;
+    float distance = (float)duration / 58.0f;
+    
+    // Ignore physical impossibilities or out-of-bounds readings (> 400 cm)
+    if (distance > 400.0f) {
+        return -1.0f;
+    }
+    
+    return distance;
 }
 
 static void ultrasonic_safety_task(void *pvParameter) {
     bool last_lock_state = false;
+    int64_t last_detection_time = 0;
 
     while (1) {
         if (sensor_enabled) {
@@ -72,8 +88,13 @@ static void ultrasonic_safety_task(void *pvParameter) {
 
             if (dist > 0 && dist < distance_threshold) {
                 safety_lock_engaged = true;
+                last_detection_time = esp_timer_get_time();
             } else {
-                safety_lock_engaged = false;
+                // Ensure the safety lock is engaged for at least 1,000,000 microseconds (1 second) 
+                // after the last positive obstacle detection before returning to normal operations
+                if (safety_lock_engaged && (esp_timer_get_time() - last_detection_time > 1000000)) {
+                    safety_lock_engaged = false;
+                }
             }
         } else {
             safety_lock_engaged = false;
@@ -99,6 +120,7 @@ static void ultrasonic_safety_task(void *pvParameter) {
 void sensor_monitor_init() {
     load_sensor_nvs();
 
+    // Configure Trig Pin (Output)
     gpio_config_t io_conf = {};
     io_conf.intr_type = GPIO_INTR_DISABLE;
     io_conf.mode = GPIO_MODE_OUTPUT;
@@ -107,8 +129,11 @@ void sensor_monitor_init() {
     io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
     gpio_config(&io_conf);
 
+    // Configure Echo Pin (Input with explicit pull-down to filter floating wire noise)
     io_conf.mode = GPIO_MODE_INPUT;
     io_conf.pin_bit_mask = (1ULL << ULTRASONIC_ECHO_PIN);
+    io_conf.pull_down_en = GPIO_PULLDOWN_ENABLE;
+    io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
     gpio_config(&io_conf);
     
     gpio_set_level(ULTRASONIC_TRIG_PIN, 0);
