@@ -27,7 +27,7 @@ static int32_t target_high_right = 90;
 static int32_t target_high_left  = 90;
 static int32_t target_low_right  = 90;
 
-static int active_animation = 0; // 0=None, 1=Walk Forward, 2=Walk Back, 3=Step Forward, 4=Step Back, 5=Left Wave, 6=Right Wave, 7=Crawl
+static int active_animation = 0; // 0=None, 1=Walk Forward, 2=Walk Back, 3=Step Forward, 4=Step Back, 5=Left Wave, 6=Right Wave, 7=Crawl, 8=SitToStandTransition
 static int anim_state = 0;
 static int anim_pos = 90;
 static int wait_counter = 0;
@@ -41,7 +41,7 @@ static int wait_counter = 0;
 static int32_t offset_low_left   = 0;
 static int32_t offset_high_right = 0;
 static int32_t offset_high_left  = 0;
-static int32_t offset_low_right  = 0;
+static int32_t offset_low_right  = 4; // Default safe motor offset for Low Right Leg
 
 struct Pose { int32_t ll, hr, hl, lr; };
 // Unified Logical Coordinates: 0 is always facing Left, 180 is always facing Right.
@@ -49,7 +49,7 @@ static Pose poses[5] = {
     {0, 0, 0, 0},        // sit (all facing left/0)
     {90, 90, 90, 90},    // stand
     {90, 180, 180, 90},  // stretch_down
-    {0, 90, 90, 180},    // stretch_back
+    {0, 90, 90, 0},      // stretch_back (Low Right Leg corrected to 0)
     {90, 90, 90, 90}     // stop
 };
 // =========================================================
@@ -59,7 +59,14 @@ static const char* pose_keys[5]  = {"sit", "std", "sdn", "sbk", "stp"}; // Short
 
 static void write_servo_calibrated(ledc_channel_t channel, int32_t target_angle, int32_t offset) {
     int32_t final_angle = target_angle + offset;
-    if (final_angle < 0) final_angle = 0;
+    
+    // Safety clamp guard for the low right leg to prevent continuous rotation failure
+    if (channel == SERVO_LOW_RIGHT_CH) {
+        if (final_angle < 4) final_angle = 4;
+    } else {
+        if (final_angle < 0) final_angle = 0;
+    }
+    
     if (final_angle > 180) final_angle = 180;
     
     uint32_t duty = 204 + ((1024 - 204) * final_angle) / 180;
@@ -77,11 +84,18 @@ static void apply_all_servos() {
     write_servo_calibrated(SERVO_LOW_RIGHT_CH,  target_low_right,        offset_low_right);
 }
 
+static bool current_is_sit() {
+    return (target_low_left == poses[0].ll && 
+            target_high_right == poses[0].hr && 
+            target_high_left == poses[0].hl && 
+            target_low_right == poses[0].lr);
+}
+
 static void servo_animation_task(void *pv) {
     while(1) {
         if (sensor_is_safety_locked()) {
-            // Cancel active loops instantly if safe zone is violated (IDs 1 through 7)
-            if (active_animation >= 1 && active_animation <= 7) {
+            // Cancel active locomotion loops instantly if safe zone is violated
+            if (active_animation >= 1 && active_animation <= 8) {
                 active_animation = 0;
                 servo_set_action_bypass(sensor_get_tripped_action());
             }
@@ -264,6 +278,36 @@ static void servo_animation_task(void *pv) {
             apply_all_servos();
             vTaskDelay(pdMS_TO_TICKS(20));
             
+        } else if (active_animation == 8) {
+            // Asynchronous Transition Sequence: Sit -> Stretch Back -> Stand (Prevents Tipping Over)
+            if (anim_state == 0) {
+                // Step 1: Immediately transition to Stretch Back pose to align gravity
+                target_low_left   = poses[3].ll;
+                target_high_right = poses[3].hr;
+                target_high_left  = poses[3].hl;
+                target_low_right  = poses[3].lr;
+                apply_all_servos();
+                
+                anim_state = 1;
+                wait_counter = 0;
+            } else if (anim_state == 1) {
+                // Step 2: Hold Stretch Back pose for 1 second (50 frames * 20ms = 1000ms)
+                wait_counter++;
+                if (wait_counter >= 50) {
+                    anim_state = 2;
+                }
+            } else if (anim_state == 2) {
+                // Step 3: Transition to Stand pose
+                target_low_left   = poses[1].ll;
+                target_high_right = poses[1].hr;
+                target_high_left  = poses[1].hl;
+                target_low_right  = poses[1].lr;
+                apply_all_servos();
+                
+                active_animation = 0; // Transition complete, idle
+            }
+            vTaskDelay(pdMS_TO_TICKS(20));
+            
         } else {
             vTaskDelay(pdMS_TO_TICKS(50)); // Idle wait
         }
@@ -378,6 +422,20 @@ void servo_set_action_bypass(const char* action_name) {
         anim_state = 0;
         anim_pos = 90;
         wait_counter = 0;
+    } else if (strcmp(action_name, "stand") == 0) {
+        if (current_is_sit()) {
+            active_animation = 8; // Safely transition from Sit to Stretch Back, then Stand
+            anim_state = 0;
+            anim_pos = 90;
+            wait_counter = 0;
+        } else {
+            active_animation = 0; // Cancel manual animations
+            target_low_left   = poses[1].ll;
+            target_high_right = poses[1].hr;
+            target_high_left  = poses[1].hl;
+            target_low_right  = poses[1].lr;
+            apply_all_servos();
+        }
     } else if (strcmp(action_name, "none") == 0) {
         // Explicitly configured to do nothing
     } else {
