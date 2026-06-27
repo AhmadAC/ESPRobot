@@ -180,7 +180,11 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
             <div class='ctrl-group' style='border-left-color: #9b59b6;'>
                 <div class='ctrl-header'><span>Safety Halt Threshold</span><span id='val_threshold'>20cm</span></div>
                 <input type='range' id='threshold' min='5' max='100' value='20' onchange='updateThreshold(this.value)'>
-                <p style='margin: 0; font-size: 11px; color: #7f8c8d; line-height: 1.4;'>Automatic response configurations trigger immediately when distance crosses this safe limit.</p>
+                <p style='margin-bottom: 15px; font-size: 11px; color: #7f8c8d; line-height: 1.4;'>Automatic response configurations trigger immediately when distance crosses this safe limit.</p>
+                
+                <div class='ctrl-header'><span>Reaction Delay</span><span id='val_reaction'>0ms</span></div>
+                <input type='range' id='reaction' min='0' max='5000' step='100' value='0' onchange='updateReaction(this.value)'>
+                <p style='margin: 0; font-size: 11px; color: #7f8c8d; line-height: 1.4;'>Wait time between detection and automatic action execution.</p>
             </div>
         </div>
         <div class='grid' style='margin-top:15px;'>
@@ -406,13 +410,20 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         sendSensorConfig();
     }
 
+    function updateReaction(val) {
+        document.getElementById('val_reaction').innerText = val + "ms";
+        sendSensorConfig();
+    }
+
     function sendSensorConfig() {
         let thresh = parseInt(document.getElementById('threshold').value) || 20;
+        let react = parseInt(document.getElementById('reaction').value) || 0;
         let tripAct = document.getElementById('sensor_tripped_action').value;
         let clearAct = document.getElementById('sensor_cleared_action').value;
         fetchJSON('/sensor', {
             enabled: localSensorEnabled, 
             threshold: thresh,
+            reaction_time: react,
             tripped_action: tripAct,
             cleared_action: clearAct
         });
@@ -468,6 +479,11 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
                 if (document.activeElement !== document.getElementById('threshold')) {
                     document.getElementById('threshold').value = data.sensor_threshold;
                     document.getElementById('val_threshold').innerText = data.sensor_threshold + "cm";
+                }
+
+                if (document.activeElement !== document.getElementById('reaction')) {
+                    document.getElementById('reaction').value = data.sensor_reaction_time || 0;
+                    document.getElementById('val_reaction').innerText = (data.sensor_reaction_time || 0) + "ms";
                 }
 
                 if (document.activeElement !== document.getElementById('sensor_tripped_action')) {
@@ -641,6 +657,10 @@ static esp_err_t sensor_post_handler(httpd_req_t *req) {
         if (th_item) {
             sensor_set_threshold(th_item->valueint);
         }
+        cJSON *re_item = cJSON_GetObjectItem(json, "reaction_time");
+        if (re_item) {
+            sensor_set_reaction_time(re_item->valueint);
+        }
         cJSON *trip_item = cJSON_GetObjectItem(json, "tripped_action");
         cJSON *clear_item = cJSON_GetObjectItem(json, "cleared_action");
         if (trip_item && clear_item) {
@@ -670,6 +690,7 @@ static esp_err_t angles_get_handler(httpd_req_t *req) {
     cJSON_AddBoolToObject(root, "safety_lock", sensor_is_safety_locked());
     cJSON_AddNumberToObject(root, "sensor_distance", sensor_get_distance());
     cJSON_AddNumberToObject(root, "sensor_threshold", sensor_get_threshold());
+    cJSON_AddNumberToObject(root, "sensor_reaction_time", sensor_get_reaction_time());
     
     // Safety Routine Metadata Export
     cJSON_AddStringToObject(root, "sensor_tripped_action", sensor_get_tripped_action());

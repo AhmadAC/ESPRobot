@@ -10,6 +10,10 @@ void sensor_set_threshold(int32_t threshold);
 float sensor_get_distance();
 bool sensor_is_safety_locked();
 
+// Reaction time modifier
+int32_t sensor_get_reaction_time();
+void sensor_set_reaction_time(int32_t time_ms);
+
 // Programmatic Sensor Target Routines
 const char* sensor_get_tripped_action();
 const char* sensor_get_cleared_action();

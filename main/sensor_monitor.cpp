@@ -17,6 +17,7 @@ static const char *TAG = "SENSOR";
 static bool sensor_enabled = false; 
 static bool safety_lock_engaged = false;
 static int32_t distance_threshold = 20; 
+static int32_t reaction_delay = 0;
 static float current_distance = -1.0f; 
 
 // Dynamic response buffers
@@ -27,6 +28,7 @@ static void load_sensor_nvs() {
     nvs_handle_t my_handle;
     if (nvs_open("storage", NVS_READONLY, &my_handle) == ESP_OK) {
         nvs_get_i32(my_handle, "sens_thresh", &distance_threshold);
+        nvs_get_i32(my_handle, "sens_react", &reaction_delay);
         
         size_t len = sizeof(tripped_action);
         nvs_get_str(my_handle, "act_trip", tripped_action, &len);
@@ -102,6 +104,9 @@ static void ultrasonic_safety_task(void *pvParameter) {
 
         // State Machine State Change Hook
         if (safety_lock_engaged != last_lock_state) {
+            if (reaction_delay > 0) {
+                vTaskDelay(pdMS_TO_TICKS(reaction_delay));
+            }
             if (safety_lock_engaged) {
                 ESP_LOGW(TAG, "Safety Lock ENGAGED! Obstacle at %.1f cm. Running action: %s", current_distance, tripped_action);
                 servo_set_action_bypass(tripped_action);
@@ -142,6 +147,18 @@ void sensor_set_threshold(int32_t threshold) {
     nvs_handle_t my_handle;
     if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
         nvs_set_i32(my_handle, "sens_thresh", distance_threshold);
+        nvs_commit(my_handle);
+        nvs_close(my_handle);
+    }
+}
+
+int32_t sensor_get_reaction_time() { return reaction_delay; }
+
+void sensor_set_reaction_time(int32_t time_ms) {
+    reaction_delay = time_ms;
+    nvs_handle_t my_handle;
+    if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
+        nvs_set_i32(my_handle, "sens_react", reaction_delay);
         nvs_commit(my_handle);
         nvs_close(my_handle);
     }

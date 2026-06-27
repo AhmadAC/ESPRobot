@@ -93,16 +93,7 @@ static bool current_is_sit() {
 
 static void servo_animation_task(void *pv) {
     while(1) {
-        if (sensor_is_safety_locked()) {
-            // Cancel active locomotion loops instantly if safe zone is violated
-            if (active_animation >= 1 && active_animation <= 10) {
-                active_animation = 0;
-                servo_set_action_bypass(sensor_get_tripped_action());
-            }
-            vTaskDelay(pdMS_TO_TICKS(100));
-            continue;
-        }
-        
+        // Animation Loop allows uninterrupted triggered sensor animations to execute normally!
         if (active_animation == 1) { 
             // Forward Walk Loop - Diagonal Trot Gait
             if (anim_state == 0) {
