@@ -59,7 +59,7 @@ static void audio_task(void *pvParameter) {
                 if (strncmp((const char*)wav_start, "RIFF", 4) == 0) {
                     size_t offset = 12; // Skip RIFF header, file size, and WAVE format
                     
-                    while (offset < (wav_end - wav_start) - 8) {
+                    while (offset < (size_t)(wav_end - wav_start) - 8) {
                         char chunk_id[5] = {0};
                         memcpy(chunk_id, wav_start + offset, 4);
                         uint32_t chunk_size = *(uint32_t*)(wav_start + offset + 4);
@@ -200,4 +200,11 @@ void audio_play(const char* sound_name) {
     
     // Add to queue (non-blocking). If queue is full (spamming play), it ignores the request.
     xQueueSend(audio_queue, &req, 0); 
+}
+
+void audio_stop() {
+    xQueueReset(audio_queue); // Clears any pending plays
+    i2s_channel_disable(tx_chan);
+    i2s_channel_enable(tx_chan); // Re-enable for next time
+    ESP_LOGI(TAG, "Audio playback stopped.");
 }

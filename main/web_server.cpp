@@ -102,7 +102,7 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         </div>
     </div>
 
-    <!-- NEW AUDIO CARD -->
+    <!-- AUDIO CARD -->
     <div class='card'>
         <h2>Audio & Speaker Output</h2>
         <div class='grid'>
@@ -116,7 +116,10 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
                 <select id='audio_test_file'>
                     <option value='dog_bark'>dog-barking.wav</option>
                 </select>
-                <button class='btn-teal' onclick='testAudio()'>Play Selected Sound</button>
+                <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px;'>
+                    <button class='btn-teal' onclick='testAudio()'>Play</button>
+                    <button class='btn-red' onclick='stopAudio()'>Stop Sound</button>
+                </div>
             </div>
         </div>
     </div>
@@ -321,6 +324,10 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
     function testAudio() {
         let sound = document.getElementById('audio_test_file').value;
         fetchJSON('/audio_play', { sound: sound });
+    }
+    
+    function stopAudio() {
+        fetch('/audio_stop', { method: 'POST' });
     }
     // -----------------------
 
@@ -713,6 +720,12 @@ static esp_err_t audio_play_post_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+static esp_err_t audio_stop_post_handler(httpd_req_t *req) {
+    audio_stop();
+    httpd_resp_sendstr(req, "OK");
+    return ESP_OK;
+}
+
 static esp_err_t servo_post_handler(httpd_req_t *req) {
     cJSON *json = NULL;
     if (get_post_json(req, &json) == ESP_OK) {
@@ -881,6 +894,12 @@ static esp_err_t favicon_get_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+static esp_err_t silent_404_handler(httpd_req_t *req) {
+    // Acknowledge the request silently to stop 404 spam in the serial console
+    httpd_resp_send_404(req);
+    return ESP_OK;
+}
+
 void web_server_init() {
     if (server == NULL) {
         httpd_config_t config = HTTPD_DEFAULT_CONFIG();
@@ -914,6 +933,10 @@ void web_server_init() {
             // Audio Additions
             httpd_uri_t uri_audcfg   = { .uri = "/audio_config", .method = HTTP_POST, .handler = audio_config_post_handler, .user_ctx = NULL };
             httpd_uri_t uri_audply   = { .uri = "/audio_play", .method = HTTP_POST, .handler = audio_play_post_handler, .user_ctx = NULL };
+            httpd_uri_t uri_audstp   = { .uri = "/audio_stop", .method = HTTP_POST, .handler = audio_stop_post_handler, .user_ctx = NULL };
+            
+            // Silent 404 Handler for OS background pings
+            httpd_uri_t uri_noisy    = { .uri = "/connecttest.txt", .method = HTTP_GET, .handler = silent_404_handler, .user_ctx = NULL };
 
             httpd_uri_t uri_cp1      = { .uri = "/generate_204", .method = HTTP_GET, .handler = captive_portal_redirect, .user_ctx = NULL };
             httpd_uri_t uri_cp2      = { .uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = captive_portal_redirect, .user_ctx = NULL };
@@ -936,6 +959,8 @@ void web_server_init() {
             
             httpd_register_uri_handler(server, &uri_audcfg);
             httpd_register_uri_handler(server, &uri_audply);
+            httpd_register_uri_handler(server, &uri_audstp);
+            httpd_register_uri_handler(server, &uri_noisy);
 
             httpd_register_uri_handler(server, &uri_cp1);
             httpd_register_uri_handler(server, &uri_cp2);
