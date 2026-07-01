@@ -27,22 +27,40 @@ static int ble_rx_cb(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt
     return 0;
 }
 
-// Minimalistic BLE Server Tree mimicking Nordic UART Service (NUS)
+// -------------------------------------------------------------
+// Static Definitions for C++ Compliance
+// -------------------------------------------------------------
+// In C++, we must declare these UUID structs statically rather 
+// than using inline macros so the compiler can assign them 
+// permanent memory addresses (lvalues).
+static const ble_uuid16_t svc_uuid = BLE_UUID16_INIT(0xABF0);
+static const ble_uuid16_t chr_uuid = BLE_UUID16_INIT(0xABF1);
+
+// Standalone Characteristics Array (Nordic UART RX mimic)
+static const struct ble_gatt_chr_def gatt_chrs[] = {
+    {
+        .uuid = (const ble_uuid_t *)&chr_uuid,
+        .access_cb = ble_rx_cb,
+        .arg = nullptr,
+        .descriptors = nullptr,
+        .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
+        .min_key_size = 0,
+        .val_handle = nullptr
+    },
+    {} // C++ Zero-initialize termination marker
+};
+
+// Standalone Minimalistic BLE Server Tree
 static const struct ble_gatt_svc_def gatt_svcs[] = {
     {
         .type = BLE_GATT_SVC_TYPE_PRIMARY,
-        .uuid = BLE_UUID16_DECLARE(0xABF0),
-        .characteristics = (struct ble_gatt_chr_def[]) {
-            {
-                .uuid = BLE_UUID16_DECLARE(0xABF1),
-                .access_cb = ble_rx_cb,
-                .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP,
-            },
-            { 0 }
-        }
+        .uuid = (const ble_uuid_t *)&svc_uuid,
+        .includes = nullptr,
+        .characteristics = gatt_chrs
     },
-    { 0 }
+    {} // C++ Zero-initialize termination marker
 };
+// -------------------------------------------------------------
 
 static void ble_app_on_sync(void) {
     uint8_t own_addr_type;
