@@ -9,11 +9,90 @@
 #include "nvs.h"
 #include "cJSON.h"
 #include "esp_timer.h"
+#include "lwip/sockets.h"
+#include "lwip/err.h"
+#include "lwip/sys.h"
 
 static const char *TAG = "WIFI_MGR";
 
 static int64_t disconnect_time = 0;
 static bool ap_fallback_active = false;
+static TaskHandle_t dns_task_handle = NULL;
+
+/* ==============================================
+   DNS CAPTIVE PORTAL TASK
+   ============================================== */
+static void dns_server_task(void *pvParameters) {
+    char rx_buffer[128];
+    struct sockaddr_in dest_addr;
+    dest_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_port = htons(53);
+    
+    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+    if (sock < 0) {
+        ESP_LOGE("DNS", "Unable to create socket: errno %d", errno);
+        vTaskDelete(NULL);
+        return;
+    }
+    
+    int err = bind(sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+    if (err < 0) {
+        ESP_LOGE("DNS", "Socket unable to bind: errno %d", errno);
+        close(sock);
+        vTaskDelete(NULL);
+        return;
+    }
+    
+    ESP_LOGI("DNS", "DNS Server listening on port 53 (Captive Portal active)");
+
+    while (1) {
+        struct sockaddr_storage source_addr;
+        socklen_t socklen = sizeof(source_addr);
+        int len = recvfrom(sock, rx_buffer, sizeof(rx_buffer) - 1, 0, (struct sockaddr *)&source_addr, &socklen);
+        
+        if (len < 0) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        if (len > 12) {
+            // Very basic DNS response to forward all traffic to 192.168.4.1 (The AP IP)
+            rx_buffer[2] = 0x81; // Flags: Standard query response, No error
+            rx_buffer[3] = 0x80;
+            rx_buffer[6] = rx_buffer[4]; // Answer RRs = Question RRs
+            rx_buffer[7] = rx_buffer[5];
+            rx_buffer[8] = 0; rx_buffer[9] = 0; // Authority RRs
+            rx_buffer[10] = 0; rx_buffer[11] = 0; // Additional RRs
+            
+            int pos = len;
+            // Answer header (Pointer to question)
+            rx_buffer[pos++] = 0xC0;
+            rx_buffer[pos++] = 0x0C;
+            // Type A
+            rx_buffer[pos++] = 0x00;
+            rx_buffer[pos++] = 0x01;
+            // Class IN
+            rx_buffer[pos++] = 0x00;
+            rx_buffer[pos++] = 0x01;
+            // TTL (60)
+            rx_buffer[pos++] = 0x00;
+            rx_buffer[pos++] = 0x00;
+            rx_buffer[pos++] = 0x00;
+            rx_buffer[pos++] = 0x3C;
+            // Data length (4)
+            rx_buffer[pos++] = 0x00;
+            rx_buffer[pos++] = 0x04;
+            // IP Address (192.168.4.1)
+            rx_buffer[pos++] = 192;
+            rx_buffer[pos++] = 168;
+            rx_buffer[pos++] = 4;
+            rx_buffer[pos++] = 1;
+            
+            sendto(sock, rx_buffer, pos, 0, (struct sockaddr *)&source_addr, sizeof(source_addr));
+        }
+    }
+}
 
 // Background event handler to automatically reconnect if the router drops the connection
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
@@ -32,6 +111,10 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
                 ESP_LOGW(TAG, "Wi-Fi disconnected for 300s. Enabling AP fallback...");
                 esp_wifi_set_mode(WIFI_MODE_APSTA);
                 ap_fallback_active = true;
+                
+                if (dns_task_handle == NULL) {
+                    xTaskCreate(dns_server_task, "dns_task", 4096, NULL, 5, &dns_task_handle);
+                }
             }
             ESP_LOGW(TAG, "Disconnected from Wi-Fi. AP Active. Retrying STA in 3s...");
         } else {
@@ -70,6 +153,18 @@ void wifi_manager_init() {
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &wifi_event_handler, NULL, &instance_any_id));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL, &instance_got_ip));
 
+    // Force default IP mapping on the AP so iOS/Android captive portals map safely
+    esp_netif_t *ap_netif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+    if (ap_netif) {
+        esp_netif_ip_info_t ip_info;
+        IP4_ADDR(&ip_info.ip, 192, 168, 4, 1);
+        IP4_ADDR(&ip_info.gw, 192, 168, 4, 1);
+        IP4_ADDR(&ip_info.netmask, 255, 255, 255, 0);
+        esp_netif_dhcps_stop(ap_netif);
+        esp_netif_set_ip_info(ap_netif, &ip_info);
+        esp_netif_dhcps_start(ap_netif);
+    }
+
     // Configure AP Mode profile
     wifi_config_t ap_config = {};
     strcpy((char*)ap_config.ap.ssid, "ESPRobot_Config");
@@ -84,15 +179,18 @@ void wifi_manager_init() {
     
     nvs_handle_t my_handle;
     bool has_creds = false;
+    uint8_t force_ap_u8 = 0;
     char ssid[33] = {0}; 
     char pass[65] = {0};
 
     // Auto-Connect Station sequentially if configurations exist
     if (nvs_open("storage", NVS_READONLY, &my_handle) == ESP_OK) {
+        nvs_get_u8(my_handle, "force_ap", &force_ap_u8);
         size_t s_len = sizeof(ssid); 
         size_t p_len = sizeof(pass);
         
-        if (nvs_get_str(my_handle, "wifi_ssid", ssid, &s_len) == ESP_OK &&
+        if (force_ap_u8 == 0 &&
+            nvs_get_str(my_handle, "wifi_ssid", ssid, &s_len) == ESP_OK &&
             nvs_get_str(my_handle, "wifi_pass", pass, &p_len) == ESP_OK) {
             has_creds = true;
         }
@@ -104,8 +202,15 @@ void wifi_manager_init() {
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
         ap_fallback_active = false;
     } else {
-        // No credentials, leave APSTA active immediately so the user can configure
+        if (force_ap_u8 == 1) ESP_LOGI(TAG, "AP Mode forced by User Preference.");
+        else ESP_LOGI(TAG, "No Valid Credentials Found. Launching AP Config Mode...");
+        
+        // No credentials or forced AP, leave APSTA active immediately so the user can configure
         ap_fallback_active = true;
+        
+        if (dns_task_handle == NULL) {
+            xTaskCreate(dns_server_task, "dns_task", 4096, NULL, 5, &dns_task_handle);
+        }
     }
     
     // Explicitly mirror the old working code: Start Wi-Fi FIRST before connecting

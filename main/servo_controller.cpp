@@ -27,7 +27,7 @@ static int32_t target_high_right = 90;
 static int32_t target_high_left  = 90;
 static int32_t target_low_right  = 90;
 
-static int active_animation = 0; // 0=None, 1=Walk Forward, 2=Walk Back, 3=Step Forward, 4=Step Back, 5=Left Wave, 6=Right Wave, 7=Crawl, 8=SitToStand, 9=BackLeftWave, 10=BackRightWave
+static int active_animation = 0; // 0=None, 1=Walk Forward, 2=Walk Back, 3=Step Forward, 4=Step Back, 5=Left Wave, 6=Right Wave, 7=Crawl, 8=SitToStand, 9=BackLeftWave, 10=BackRightWave, 11=LeapForward
 static int anim_state = 0;
 static int anim_pos = 90;
 static int wait_counter = 0;
@@ -377,6 +377,39 @@ static void servo_animation_task(void *pv) {
             apply_all_servos();
             vTaskDelay(pdMS_TO_TICKS(15));
 
+        } else if (active_animation == 11) {
+            // Leap Forward Loop
+            if (anim_state == 0) {
+                target_high_left = 180;
+                target_high_right = 180;
+                apply_all_servos();
+                wait_counter = 0;
+                anim_state = 1;
+            } else if (anim_state == 1) {
+                wait_counter++;
+                if (wait_counter >= 25) { // 25 * 20ms = 500ms
+                    target_low_left = 180;
+                    target_low_right = 180;
+                    apply_all_servos();
+                    wait_counter = 0;
+                    anim_state = 2;
+                }
+            } else if (anim_state == 2) {
+                wait_counter++;
+                if (wait_counter >= 25) { // 25 * 20ms = 500ms
+                    target_low_left = 0;
+                    target_low_right = 0;
+                    apply_all_servos();
+                    wait_counter = 0;
+                    anim_state = 3;
+                }
+            } else if (anim_state == 3) {
+                wait_counter++;
+                if (wait_counter >= 25) { // 25 * 20ms = 500ms
+                    anim_state = 1; // Loop back to setting low legs to 180
+                }
+            }
+            vTaskDelay(pdMS_TO_TICKS(20));
         } else {
             vTaskDelay(pdMS_TO_TICKS(50)); // Idle wait
         }
@@ -529,6 +562,10 @@ void servo_set_action_bypass(const char* action_name) {
         active_animation = 10;
         anim_state = 0;
         anim_pos = 90;
+        wait_counter = 0;
+    } else if (strcmp(action_name, "leap_forward") == 0) {
+        active_animation = 11;
+        anim_state = 0;
         wait_counter = 0;
     } else if (strcmp(action_name, "none") == 0) {
         // Explicitly configured to do nothing

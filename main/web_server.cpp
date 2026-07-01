@@ -27,53 +27,77 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
     <title>ESPRobot Dashboard</title>
     <meta name='viewport' content='width=device-width, initial-scale=1'>
     <style>
-        body { font-family: 'Segoe UI', Arial, sans-serif; background: #eef2f3; margin: 0; padding: 20px; color: #333; }
+        :root { --primary: #0ea5e9; --bg: #0f172a; --card: #1e293b; --text: #f1f5f9; }
+        body { font-family: -apple-system, sans-serif; background: var(--bg); color: var(--text); padding: 15px; margin: 0; }
         .container { max-width: 800px; margin: 0 auto; }
-        h1 { text-align: center; color: #2c3e50; margin-bottom: 30px; }
-        .card { background: white; border-radius: 12px; padding: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); margin-bottom: 25px; }
-        h2 { border-bottom: 2px solid #3498db; padding-bottom: 10px; color: #2c3e50; margin-top: 0; }
+        h1 { text-align: center; color: var(--primary); margin-bottom: 30px; }
+        .card { background: var(--card); border-radius: 16px; padding: 25px; border: 1px solid #334155; margin-bottom: 25px; box-sizing: border-box; }
+        h2 { border-bottom: 1px solid #334155; padding-bottom: 10px; color: var(--primary); margin-top: 0; margin-bottom: 15px; }
         .grid { display: grid; grid-template-columns: 1fr; gap: 20px; }
         @media (min-width: 600px) { .grid { grid-template-columns: 1fr 1fr; } }
-        .ctrl-group { background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #3498db; transition: opacity 0.3s; }
-        .ctrl-header { display: flex; justify-content: space-between; font-weight: bold; margin-bottom: 8px; }
-        label { display: block; margin-bottom: 8px; font-weight: bold; }
-        input[type=range] { width: 100%; margin-bottom: 15px; cursor: pointer; }
+        
+        .ctrl-group { background: #0f172a; padding: 15px; border-radius: 12px; border: 1px solid #334155; border-left: 4px solid #3b82f6; transition: opacity 0.3s; }
+        .ctrl-header { display: flex; justify-content: space-between; font-weight: bold; margin-bottom: 8px; color: #94a3b8; font-size: 0.9rem;}
+        label { display: block; margin-bottom: 8px; font-weight: bold; font-size: 0.9rem; color: #cbd5e1; }
+        
+        input[type=range] { width: 100%; margin-bottom: 15px; cursor: pointer; accent-color: var(--primary); }
         input[type=range]:disabled { cursor: not-allowed; opacity: 0.5; }
-        button { background: #3498db; color: white; border: none; padding: 12px 20px; border-radius: 6px; cursor: pointer; font-size: 15px; width: 100%; transition: transform 0.1s, background 0.2s; }
-        button:hover { background: #2980b9; }
-        button:active { transform: scale(0.95); opacity: 0.9; }
-        select, input[type=password], input[type=number] { width: 100%; padding: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 6px; margin-bottom: 15px; }
+        
+        button { background: #3b82f6; color: white; border: none; padding: 12px 15px; border-radius: 10px; cursor: pointer; font-size: 15px; width: 100%; transition: transform 0.1s, opacity 0.2s; box-sizing: border-box; font-weight: bold; }
+        button:hover { opacity: 0.9; }
+        button:active { transform: scale(0.96); opacity: 0.8; }
+        
+        select, input[type=password], input[type=number] { width: 100%; padding: 12px; box-sizing: border-box; border: 1px solid #475569; border-radius: 10px; background: #0f172a; color: white; margin-bottom: 15px; }
         .pass-container { display: flex; gap: 10px; align-items: center; margin-bottom: 15px; }
-        .pass-container input { margin-bottom: 0; }
-        #status { font-weight: bold; color: #16a085; text-align: center; margin-top: 10px; }
-        #lock_banner { display: none; background: #e74c3c; color: white; padding: 12px; border-radius: 8px; text-align: center; font-weight: bold; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(231, 76, 60, 0.3); }
-        .locked-mode .ctrl-group, .locked-mode .btn-grid button, .locked-mode .sync-header { opacity: 0.6; pointer-events: none; }
-        .btn-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
-        .btn-stop { background: #e74c3c !important; } .btn-stop:hover { background: #c0392b !important; }
+        .pass-container input[type=password], .pass-container input[type=text] { margin-bottom: 0; flex-grow: 1; }
+        .pass-container input[type=checkbox] { width: auto; margin: 0; }
+        
+        #status { font-weight: bold; color: #10b981; text-align: center; margin-top: 10px; font-size: 0.9rem; }
+        #lock_banner { display: none; background: #7f1d1d; color: #fca5a5; padding: 12px; border-radius: 10px; text-align: center; font-weight: bold; margin-bottom: 20px; border: 1px solid #ef4444; }
+        
+        .locked-mode .ctrl-group, .locked-mode .btn-grid button, .locked-mode .sync-header { opacity: 0.5; pointer-events: none; }
+        .btn-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 25px; }
         .sync-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        
+        .btn-green { background: #10b981; }
+        .btn-teal { background: #14b8a6; }
+        .btn-purple { background: #8b5cf6; }
+        .btn-orange { background: #f59e0b; }
+        .btn-red { background: #ef4444; }
+        .btn-gray { background: #475569; }
+        .btn-dark { background: #1e293b; border: 1px solid #334155; }
+        
+        .text-sm { font-size: 0.85rem; color: #94a3b8; margin-top: 0; }
+        .status-bar { padding: 12px; border-radius: 10px; font-weight: bold; text-align: center; font-size: 0.85rem; border: 1px solid; text-transform: uppercase; background: #172554; color: #93c5fd; border-color: #3b82f6; margin-bottom: 20px; }
     </style>
 </head>
 <body>
 <div class='container'>
-    <h1>ESPRobot Web Controller</h1>
+    <div class="status-bar">ESPRobot Control Dashboard</div>
 
     <div class='card'>
         <h2>Wi-Fi Provisioning</h2>
         <div class='grid'>
             <div>
-                <button onclick='scan()'>Scan Wi-Fi Networks</button>
-                <p id='status'></p>
+                <button class='btn-gray' onclick='scan()'>Scan Wi-Fi Networks</button>
+                <p id='status'>Ready to Scan</p>
             </div>
             <div>
                 <label>Target SSID:</label>
-                <select id='ssid'></select>
+                <select id='ssid'><option value=''>-- Select --</option></select>
                 <label>Wi-Fi Password:</label>
                 <div class='pass-container'>
                     <input type='password' id='pass' placeholder='Enter password'>
-                    <input type='checkbox' onclick="let p=document.getElementById('pass'); p.type=(p.type==='password')?'text':'password';"> <small>Show</small>
+                    <input type='checkbox' onclick="let p=document.getElementById('pass'); p.type=(p.type==='password')?'text':'password';"> <small class="text-sm">Show</small>
                 </div>
-                <button style='background: #27ae60;' onclick='saveWiFi()'>Save and Reboot</button>
+                <button class='btn-green' onclick='saveWiFi()'>Save and Connect</button>
             </div>
+        </div>
+        <hr style='border-color:#334155; margin: 25px 0;'>
+        <div class='text-sm' style='margin-bottom:10px;'>Quick Boot Mode Switch</div>
+        <div class='grid'>
+            <button class='btn-orange' onclick='forceAP()'>Force AP Mode</button>
+            <button class='btn-green' onclick='forceWiFi()'>Use Saved Wi-Fi</button>
         </div>
     </div>
 
@@ -81,45 +105,42 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         <h2>Robot Actions and Kinematics</h2>
         <div id='lock_banner'>WARNING: MOTORS LOCKED - Obstacle Detected!</div>
         
-        <div class='btn-grid' style='margin-bottom: 25px;'>
+        <div class='btn-grid'>
             <button onclick='doAction("forward")'>Walk Forward</button>
             <button onclick='doAction("backward")'>Walk Backward</button>
-            <button onclick='doAction("step_forward")' style='background:#1abc9c;'>Step Forward</button>
-            <button onclick='doAction("step_backward")' style='background:#1abc9c;'>Step Backward</button>
-            <button onclick='doAction("left_wave")' style='background:#9b59b6;'>Left Wave</button>
-            <button onclick='doAction("right_wave")' style='background:#9b59b6;'>Right Wave</button>
-            <button onclick='doAction("back_left_wave")' style='background:#9b59b6;'>Back Left Wave</button>
-            <button onclick='doAction("back_right_wave")' style='background:#9b59b6;'>Back Right Wave</button>
-            <button onclick='doAction("crawl")' style='background:#d35400;'>Forward Crawl</button>
-            <button class='btn-stop' onclick='doAction("stop")'>STOP</button>
-            <button onclick='doAction("sit")' style='background:#f39c12;'>Sit</button>
-            <button onclick='doAction("stand")' style='background:#f39c12;'>Stand Up</button>
-            <button onclick='doAction("stretch_down")' style='background:#9b59b6;'>Stretch Down</button>
-            <button onclick='doAction("stretch_back")' style='background:#9b59b6;'>Stretch Back</button>
+            <button class='btn-teal' onclick='doAction("step_forward")'>Step Forward</button>
+            <button class='btn-teal' onclick='doAction("step_backward")'>Step Backward</button>
+            <button class='btn-teal' onclick='doAction("leap_forward")'>Leap Forward</button>
+            <button class='btn-purple' onclick='doAction("left_wave")'>Left Wave</button>
+            <button class='btn-purple' onclick='doAction("right_wave")'>Right Wave</button>
+            <button class='btn-purple' onclick='doAction("back_left_wave")'>Back Left Wave</button>
+            <button class='btn-purple' onclick='doAction("back_right_wave")'>Back Right Wave</button>
+            <button class='btn-orange' onclick='doAction("crawl")'>Forward Crawl</button>
+            <button class='btn-red' onclick='doAction("stop")'>STOP</button>
+            <button class='btn-orange' onclick='doAction("sit")'>Sit</button>
+            <button class='btn-orange' onclick='doAction("stand")'>Stand Up</button>
+            <button class='btn-purple' onclick='doAction("stretch_down")'>Stretch Down</button>
+            <button class='btn-purple' onclick='doAction("stretch_back")'>Stretch Back</button>
         </div>
 
         <div class='sync-header'>
-            <h3 style='margin:0; font-size: 16px; color: #34495e;'>Manual Joint Control</h3>
-            <button id='btn_sync' onclick='toggleSync()' style='width: auto; background: #95a5a6; padding: 8px 15px; margin: 0;'>Sync Legs: OFF</button>
+            <h3 style='margin:0; font-size: 16px; color: var(--primary);'>Manual Joint Control</h3>
+            <button id='btn_sync' onclick='toggleSync()' class='btn-gray' style='width: auto; padding: 8px 15px; margin: 0;'>Sync Legs: OFF</button>
         </div>
 
         <div class='grid'>
-            <!-- Row 1 Left Column: IO12 -->
             <div class='ctrl-group'>
                 <div class='ctrl-header'><span>Low Left Leg (IO12)</span><span id='val_low_left'>90&deg;</span></div>
                 <input type='range' class='srv-slider' id='low_left' min='0' max='180' value='90' oninput='moveServo("low_left", this.value)' onmousedown='dragStart("low_left")' onmouseup='dragEnd()' ontouchstart='dragStart("low_left")' ontouchend='dragEnd()'>
             </div>
-            <!-- Row 1 Right Column: IO11 -->
             <div class='ctrl-group'>
                 <div class='ctrl-header'><span>High Left Shoulder (IO11)</span><span id='val_high_left'>90&deg;</span></div>
                 <input type='range' class='srv-slider' id='high_left' min='0' max='180' value='90' oninput='moveServo("high_left", this.value)' onmousedown='dragStart("high_left")' onmouseup='dragEnd()' ontouchstart='dragStart("high_left")' ontouchend='dragEnd()'>
             </div>
-            <!-- Row 2 Left Column: IO9 -->
             <div class='ctrl-group'>
                 <div class='ctrl-header'><span>Low Right Leg (IO9)</span><span id='val_low_right'>90&deg;</span></div>
                 <input type='range' class='srv-slider' id='low_right' min='0' max='180' value='90' oninput='moveServo("low_right", this.value)' onmousedown='dragStart("low_right")' onmouseup='dragEnd()' ontouchstart='dragStart("low_right")' ontouchend='dragEnd()'>
             </div>
-            <!-- Row 2 Right Column: IO10 -->
             <div class='ctrl-group'>
                 <div class='ctrl-header'><span>High Right Shoulder (IO10)</span><span id='val_high_right'>90&deg;</span></div>
                 <input type='range' class='srv-slider' id='high_right' min='0' max='180' value='90' oninput='moveServo("high_right", this.value)' onmousedown='dragStart("high_right")' onmouseup='dragEnd()' ontouchstart='dragStart("high_right")' ontouchend='dragEnd()'>
@@ -128,9 +149,9 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
     </div>
 
     <div class='card'>
-        <h2>Pose Calibration and Hardware Zeroing</h2>
+        <h2>Pose Calibration & Zeroing</h2>
         <div class='grid'>
-            <div class='ctrl-group' style='border-left-color: #e67e22;'>
+            <div class='ctrl-group' style='border-left-color: #f59e0b;'>
                 <label>Target to Calibrate:</label>
                 <select id='calib_target' onchange='loadCalibTarget()' style='font-weight:bold; cursor:pointer;'>
                     <option value='offsets'>1. Hardware Zeroing (Offsets)</option>
@@ -140,13 +161,13 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
                     <option value='stretch_back'>5. Pose: Stretch Back</option>
                     <option value='stop'>6. Pose: Stop (Default)</option>
                 </select>
-                <p style='font-size: 11px; color: #7f8c8d; margin-top:5px;'>First, use Hardware Zeroing to make all motors physically 90&deg;. Then calibrate your custom limits for the individual buttons.</p>
-                <button style='background: #e74c3c; margin-top: 15px;' onclick='resetCal()'>Reset NVS to Firmware Defaults</button>
+                <p class='text-sm' style='margin-top:10px; line-height:1.4;'>First, use Hardware Zeroing to make all motors physically 90&deg;. Then calibrate limits for buttons.</p>
+                <button class='btn-red' style='margin-top: 15px;' onclick='resetCal()'>Reset NVS to Firmware Defaults</button>
             </div>
-            <div class='ctrl-group' style='border-left-color: #34495e; text-align:center;'>
+            <div class='ctrl-group' style='border-left-color: #94a3b8; text-align:center;'>
                 <p style='margin-top:0; font-size:13px; font-weight:bold;'>Compile Defaults into Firmware</p>
-                <p style='margin-top:0; font-size:11px; color:#7f8c8d;'>Save your finalized configuration to a C++ file to hardcode the settings securely for your next compile.</p>
-                <button style='background: #34495e; padding: 10px;' onclick='downloadCalib()'>Download C++ Configuration</button>
+                <p class='text-sm' style='line-height:1.4;'>Save your finalized configuration to a C++ file to hardcode settings securely for your next compile.</p>
+                <button class='btn-dark' style='margin-top: 10px;' onclick='downloadCalib()'>Download C++ Config</button>
             </div>
         </div>
         <div class='grid' style='margin-top:15px;'>
@@ -164,31 +185,31 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
             </div>
         </div>
         <div class='grid' style='margin-top:15px;'>
-            <button style='background: #3498db;' onclick='testCalib()'>Test Pose or Offset</button>
-            <button style='background: #e67e22;' onclick='saveCalib()'>Save to Robot NVS Storage</button>
+            <button class='btn-blue' onclick='testCalib()'>Test Pose or Offset</button>
+            <button class='btn-orange' onclick='saveCalib()'>Save to Robot NVS Storage</button>
         </div>
     </div>
 
     <div class='card'>
         <h2>Ultrasonic Obstacle Safety Monitor</h2>
         <div class='grid'>
-            <div class='ctrl-group' style='border-left-color: #e74c3c;'>
+            <div class='ctrl-group' style='border-left-color: #ef4444;'>
                 <label>Sensor Toggle Status:</label>
                 <button id='btn_sensor' onclick='toggleSensor()'>Enable Sensor</button>
-                <p style='font-size: 16px; margin-top: 15px;'>Live Distance: <span id='live_dist' style='font-weight: bold; color: #34495e;'>--</span> cm</p>
+                <p style='font-size: 16px; margin-top: 15px;'>Live Distance: <span id='live_dist' style='font-weight: bold; color: var(--primary);'>--</span> cm</p>
             </div>
-            <div class='ctrl-group' style='border-left-color: #9b59b6;'>
+            <div class='ctrl-group' style='border-left-color: #8b5cf6;'>
                 <div class='ctrl-header'><span>Safety Halt Threshold</span><span id='val_threshold'>20cm</span></div>
                 <input type='range' id='threshold' min='5' max='100' value='20' onchange='updateThreshold(this.value)'>
-                <p style='margin-bottom: 15px; font-size: 11px; color: #7f8c8d; line-height: 1.4;'>Automatic response configurations trigger immediately when distance crosses this safe limit.</p>
+                <p class='text-sm' style='margin-bottom: 15px; line-height: 1.4;'>Triggers immediately when distance crosses limit.</p>
                 
                 <div class='ctrl-header'><span>Reaction Delay</span><span id='val_reaction'>0ms</span></div>
                 <input type='range' id='reaction' min='0' max='5000' step='100' value='0' onchange='updateReaction(this.value)'>
-                <p style='margin: 0; font-size: 11px; color: #7f8c8d; line-height: 1.4;'>Wait time between detection and automatic action execution.</p>
+                <p class='text-sm' style='line-height: 1.4;'>Wait time between detection and automatic action execution.</p>
             </div>
         </div>
         <div class='grid' style='margin-top:15px;'>
-            <div class='ctrl-group' style='border-left-color: #f1c40f;'>
+            <div class='ctrl-group' style='border-left-color: #f59e0b;'>
                 <label>Action When Tripped (Obstacle Detected):</label>
                 <select id='sensor_tripped_action' onchange='sendSensorConfig()'>
                     <option value='stop'>Stop (Default)</option>
@@ -196,6 +217,7 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
                     <option value='backward'>Walk Backward</option>
                     <option value='step_forward'>Step Forward</option>
                     <option value='step_backward'>Step Backward</option>
+                    <option value='leap_forward'>Leap Forward</option>
                     <option value='left_wave'>Left Wave</option>
                     <option value='right_wave'>Right Wave</option>
                     <option value='back_left_wave'>Back Left Wave</option>
@@ -208,7 +230,7 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
                     <option value='none'>None (Do nothing)</option>
                 </select>
             </div>
-            <div class='ctrl-group' style='border-left-color: #2ecc71;'>
+            <div class='ctrl-group' style='border-left-color: #10b981;'>
                 <label>Action When Cleared (Obstacle Removed):</label>
                 <select id='sensor_cleared_action' onchange='sendSensorConfig()'>
                     <option value='stand'>Stand Up</option>
@@ -216,6 +238,7 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
                     <option value='backward'>Walk Backward</option>
                     <option value='step_forward'>Step Forward</option>
                     <option value='step_backward'>Step Backward</option>
+                    <option value='leap_forward'>Leap Forward</option>
                     <option value='left_wave'>Left Wave</option>
                     <option value='right_wave'>Right Wave</option>
                     <option value='back_left_wave'>Back Left Wave</option>
@@ -249,6 +272,13 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         });
     }
 
+    function forceAP(){
+        if(confirm("Switch to AP Mode and reboot?")) fetch('/switch_to_ap', { method: 'POST' }).then(() => alert('Rebooting...'));
+    }
+    function forceWiFi(){
+        if(confirm("Switch to Wi-Fi Mode and reboot?")) fetch('/switch_to_wifi', { method: 'POST' }).then(() => alert('Rebooting...'));
+    }
+
     function dragStart(id) { activeDrag = id; }
     function dragEnd() { activeDrag = null; }
 
@@ -257,10 +287,10 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         let btn = document.getElementById('btn_sync');
         if (syncEnabled) {
             btn.innerText = "Sync Legs: ON";
-            btn.style.background = "#27ae60";
+            btn.classList.remove('btn-gray'); btn.classList.add('btn-green');
         } else {
             btn.innerText = "Sync Legs: OFF";
-            btn.style.background = "#95a5a6";
+            btn.classList.remove('btn-green'); btn.classList.add('btn-gray');
         }
     }
 
@@ -333,21 +363,20 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         document.getElementById('status').innerText = 'Scanning Wi-Fi...';
         fetch('/scan').then(r => r.json()).then(d => {
             let s = document.getElementById('ssid');
-            s.innerHTML = '';
+            s.innerHTML = '<option value="">-- Select --</option>';
             d.forEach(n => { s.innerHTML += '<option value="'+n+'">'+n+'</option>'; });
             document.getElementById('status').innerText = 'Found ' + d.length + ' network(s)';
-        });
+        }).catch(() => document.getElementById('status').innerText = 'Scan Error');
     }
 
     function saveWiFi() {
         let s = document.getElementById('ssid').value;
         let p = document.getElementById('pass').value;
-        if(!s) return;
-        fetchJSON('/save', {ssid: s, pass: p}).then(() => alert('Saved. Rebooting.'));
+        if(!s) return alert('Select SSID');
+        fetchJSON('/save', {ssid: s, pass: p}).then(() => alert('Saved. Rebooting...'));
     }
 
     function doAction(act) {
-        // Optimistic UI Update: Snap the sliders instantly using known calibration limits 
         if (allCalibrations[act]) {
             let p = allCalibrations[act];
             for (let leg in legMap) {
@@ -376,7 +405,6 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
 
             if (pairedId) {
                 let pairedEl = document.getElementById(pairedId);
-                // Ensure we don't trigger an infinite recursive cascade
                 if (pairedEl.value !== angle) {
                     pairedEl.value = angle;
                     document.getElementById('val_' + pairedId).innerHTML = angle + '&deg;';
@@ -385,7 +413,6 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
             }
         }
 
-        // Single debounced call that sends the combined state of both matched sliders in a single packet!
         clearTimeout(servoTimeouts['bulk']);
         servoTimeouts['bulk'] = setTimeout(() => {
             fetchJSON('/servo', payload);
@@ -394,14 +421,12 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
 
     function toggleSensor() {
         localSensorEnabled = !localSensorEnabled;
-        
         let btn = document.getElementById('btn_sensor');
         if (localSensorEnabled) {
-            btn.innerText = "Disable Sensor"; btn.style.background = "#e74c3c";
+            btn.innerText = "Disable Sensor"; btn.classList.remove('btn-green'); btn.classList.add('btn-red');
         } else {
-            btn.innerText = "Enable Sensor"; btn.style.background = "#27ae60";
+            btn.innerText = "Enable Sensor"; btn.classList.remove('btn-red'); btn.classList.add('btn-green');
         }
-        
         sendSensorConfig();
     }
 
@@ -449,7 +474,6 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
                 for (let [leg, stats] of Object.entries(data)) {
                     if (typeof stats === 'object') {
                         let el = document.getElementById(leg);
-                        // Update slider values ONLY if the user isn't currently dragging them or their synced pair
                         if(el && (!isDragging(leg) || data.safety_lock)) { 
                             el.value = stats.angle; 
                             document.getElementById('val_' + leg).innerHTML = stats.angle + '&deg;'; 
@@ -460,19 +484,19 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
                 let liveSpan = document.getElementById('live_dist');
                 if (data.sensor_enabled) {
                     liveSpan.innerText = data.sensor_distance >= 0 ? data.sensor_distance.toFixed(1) : "Out of Range";
-                    liveSpan.style.color = (data.sensor_distance > 0 && data.sensor_distance < data.sensor_threshold) ? "#e74c3c" : "#27ae60";
+                    liveSpan.style.color = (data.sensor_distance > 0 && data.sensor_distance < data.sensor_threshold) ? "#ef4444" : "#10b981";
                 } else {
                     liveSpan.innerText = "Disabled";
-                    liveSpan.style.color = "#7f8c8d";
+                    liveSpan.style.color = "#94a3b8";
                 }
 
                 if (document.activeElement !== document.getElementById('btn_sensor')) {
                     localSensorEnabled = data.sensor_enabled;
                     let btn = document.getElementById('btn_sensor');
                     if (data.sensor_enabled) {
-                        btn.innerText = "Disable Sensor"; btn.style.background = "#e74c3c";
+                        btn.innerText = "Disable Sensor"; btn.className = "btn-red";
                     } else {
-                        btn.innerText = "Enable Sensor"; btn.style.background = "#27ae60";
+                        btn.innerText = "Enable Sensor"; btn.className = "btn-green";
                     }
                 }
 
@@ -494,7 +518,6 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
                     document.getElementById('sensor_cleared_action').value = data.sensor_cleared_action || 'stand';
                 }
                 
-                // Slowed down the data refresh slightly to give weak Wi-Fi networks breathing room
                 setTimeout(updateStatus, 800); 
             })
             .catch(err => {
@@ -511,6 +534,13 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
 </html>
 )raw_html";
     httpd_resp_send(req, html, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+static esp_err_t captive_portal_redirect(httpd_req_t *req) {
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/");
+    httpd_resp_send(req, NULL, 0);
     return ESP_OK;
 }
 
@@ -561,11 +591,44 @@ static esp_err_t save_post_handler(httpd_req_t *req) {
         cJSON *pass_item = cJSON_GetObjectItem(json, "pass");
         if (ssid_item && pass_item) {
             wifi_save_credentials(ssid_item->valuestring, pass_item->valuestring);
+            
+            // Clear AP force flag when saving new credentials
+            nvs_handle_t my_handle;
+            if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
+                nvs_set_u8(my_handle, "force_ap", 0);
+                nvs_commit(my_handle);
+                nvs_close(my_handle);
+            }
+
             xTaskCreate(delayed_reboot_task, "reboot_task", 2048, NULL, 5, NULL);
         }
         cJSON_Delete(json);
         httpd_resp_sendstr(req, "OK");
     }
+    return ESP_OK;
+}
+
+static esp_err_t switch_ap_post_handler(httpd_req_t *req) {
+    nvs_handle_t my_handle;
+    if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
+        nvs_set_u8(my_handle, "force_ap", 1);
+        nvs_commit(my_handle);
+        nvs_close(my_handle);
+    }
+    httpd_resp_sendstr(req, "OK");
+    xTaskCreate(delayed_reboot_task, "reboot_task", 2048, NULL, 5, NULL);
+    return ESP_OK;
+}
+
+static esp_err_t switch_wifi_post_handler(httpd_req_t *req) {
+    nvs_handle_t my_handle;
+    if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
+        nvs_set_u8(my_handle, "force_ap", 0);
+        nvs_commit(my_handle);
+        nvs_close(my_handle);
+    }
+    httpd_resp_sendstr(req, "OK");
+    xTaskCreate(delayed_reboot_task, "reboot_task", 2048, NULL, 5, NULL);
     return ESP_OK;
 }
 
@@ -733,7 +796,8 @@ void web_server_init() {
         httpd_config_t config = HTTPD_DEFAULT_CONFIG();
         
         // Optimize configuration for swift request processing and thread isolation
-        config.max_uri_handlers = 13;
+        config.uri_match_fn = httpd_uri_match_wildcard; // Allows wildcard redirects for Captive Portal
+        config.max_uri_handlers = 20;                   // Expand limits to fit our new routing
         config.core_id = 1;                             // Restrict the HTTP server strictly to Core 1
         config.task_priority = 5;                       // Standardized to baseline HTTP daemon logic
         config.stack_size = 8192;                       // Guarantee stack space for processing JSON inputs safely
@@ -746,6 +810,8 @@ void web_server_init() {
             httpd_uri_t uri_index    = { .uri = "/", .method = HTTP_GET, .handler = index_get_handler, .user_ctx = NULL };
             httpd_uri_t uri_scan     = { .uri = "/scan", .method = HTTP_GET, .handler = scan_get_handler, .user_ctx = NULL };
             httpd_uri_t uri_save     = { .uri = "/save", .method = HTTP_POST, .handler = save_post_handler, .user_ctx = NULL };
+            httpd_uri_t uri_switchap = { .uri = "/switch_to_ap", .method = HTTP_POST, .handler = switch_ap_post_handler, .user_ctx = NULL };
+            httpd_uri_t uri_switchwi = { .uri = "/switch_to_wifi", .method = HTTP_POST, .handler = switch_wifi_post_handler, .user_ctx = NULL };
             httpd_uri_t uri_servo    = { .uri = "/servo", .method = HTTP_POST, .handler = servo_post_handler, .user_ctx = NULL };
             httpd_uri_t uri_act      = { .uri = "/action", .method = HTTP_POST, .handler = action_post_handler, .user_ctx = NULL };
             httpd_uri_t uri_cal      = { .uri = "/calibrate", .method = HTTP_POST, .handler = calibrate_post_handler, .user_ctx = NULL };
@@ -756,9 +822,16 @@ void web_server_init() {
             httpd_uri_t uri_resetcal = { .uri = "/reset_cal", .method = HTTP_POST, .handler = reset_cal_post_handler, .user_ctx = NULL };
             httpd_uri_t uri_favicon  = { .uri = "/favicon.ico", .method = HTTP_GET, .handler = favicon_get_handler, .user_ctx = NULL };
             
+            // Standard OS Captive Portal Endpoints
+            httpd_uri_t uri_cp1      = { .uri = "/generate_204", .method = HTTP_GET, .handler = captive_portal_redirect, .user_ctx = NULL };
+            httpd_uri_t uri_cp2      = { .uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = captive_portal_redirect, .user_ctx = NULL };
+            httpd_uri_t uri_cp3      = { .uri = "/ncsi.txt", .method = HTTP_GET, .handler = captive_portal_redirect, .user_ctx = NULL };
+            
             httpd_register_uri_handler(server, &uri_index);
             httpd_register_uri_handler(server, &uri_scan);
             httpd_register_uri_handler(server, &uri_save);
+            httpd_register_uri_handler(server, &uri_switchap);
+            httpd_register_uri_handler(server, &uri_switchwi);
             httpd_register_uri_handler(server, &uri_servo);
             httpd_register_uri_handler(server, &uri_act);
             httpd_register_uri_handler(server, &uri_cal);
@@ -768,6 +841,9 @@ void web_server_init() {
             httpd_register_uri_handler(server, &uri_sensor);
             httpd_register_uri_handler(server, &uri_resetcal);
             httpd_register_uri_handler(server, &uri_favicon);
+            httpd_register_uri_handler(server, &uri_cp1);
+            httpd_register_uri_handler(server, &uri_cp2);
+            httpd_register_uri_handler(server, &uri_cp3);
             
             ESP_LOGI(TAG, "Dashboard Server initialized successfully on port %d", config.server_port);
         }
