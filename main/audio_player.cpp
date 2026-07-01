@@ -17,6 +17,7 @@ static const char *TAG = "AUDIO";
 static i2s_chan_handle_t tx_chan;
 static int32_t current_volume = 50; // 0-100 Default volume
 static QueueHandle_t audio_queue;
+static volatile bool audio_stop_requested = false; // Flag to instantly break playback loops
 
 // Access the embedded WAV file created by CMake
 extern const uint8_t dog_barking_wav_start[] asm("_binary_dog_barking_wav_start");
@@ -112,7 +113,15 @@ static void audio_task(void *pvParameter) {
                     int16_t out_buffer[CHUNK_SAMPLES];
                     size_t bytes_written;
                     
+                    audio_stop_requested = false; // Reset interrupt flag before playing
+                    
                     for (size_t i = 0; i < num_samples; i += CHUNK_SAMPLES) {
+                        
+                        // Check if the user hit the STOP button
+                        if (audio_stop_requested) {
+                            break; // Immediately exit the audio blasting loop
+                        }
+                        
                         size_t chunk_size = (num_samples - i < CHUNK_SAMPLES) ? (num_samples - i) : CHUNK_SAMPLES;
                         
                         // Software Volume Application
@@ -131,9 +140,16 @@ static void audio_task(void *pvParameter) {
                         }
                     }
                     
-                    // Flush the DMA buffers to ensure the sound finishes cleanly
-                    i2s_channel_write(tx_chan, NULL, 0, &bytes_written, portMAX_DELAY);
-                    ESP_LOGI(TAG, "Playback finished.");
+                    if (audio_stop_requested) {
+                        // Rapidly clear the I2S hardware DMA buffer to stop the sound instantly
+                        i2s_channel_disable(tx_chan);
+                        i2s_channel_enable(tx_chan);
+                        ESP_LOGI(TAG, "Audio playback interrupted by STOP request.");
+                    } else {
+                        // Flush the DMA buffers to ensure the sound finishes cleanly naturally
+                        i2s_channel_write(tx_chan, NULL, 0, &bytes_written, portMAX_DELAY);
+                        ESP_LOGI(TAG, "Playback finished.");
+                    }
                     
                 } else {
                     ESP_LOGE(TAG, "Invalid WAV structure: Could not find 'fmt ' or 'data' chunk.");
@@ -203,8 +219,6 @@ void audio_play(const char* sound_name) {
 }
 
 void audio_stop() {
-    xQueueReset(audio_queue); // Clears any pending plays
-    i2s_channel_disable(tx_chan);
-    i2s_channel_enable(tx_chan); // Re-enable for next time
-    ESP_LOGI(TAG, "Audio playback stopped.");
+    audio_stop_requested = true; // Signal the audio loop to instantly break
+    xQueueReset(audio_queue);    // Clear any future queued sounds
 }
