@@ -2,6 +2,7 @@
 #include "wifi_manager.h"
 #include "sensor_monitor.h"
 #include "servo_controller.h"
+#include "audio_player.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "cJSON.h"
@@ -98,6 +99,25 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         <div class='grid'>
             <button class='btn-orange' onclick='forceAP()'>Force AP Mode</button>
             <button class='btn-green' onclick='forceWiFi()'>Use Saved Wi-Fi</button>
+        </div>
+    </div>
+
+    <!-- NEW AUDIO CARD -->
+    <div class='card'>
+        <h2>Audio & Speaker Output</h2>
+        <div class='grid'>
+            <div class='ctrl-group' style='border-left-color: #f43f5e;'>
+                <div class='ctrl-header'><span>Volume Control (Software PCM)</span><span id='val_volume'>50%</span></div>
+                <input type='range' id='volume_slider' min='0' max='100' value='50' onchange='updateVolume(this.value)'>
+                <p class='text-sm' style='margin-bottom:0;'>Controls safe digital amplifier output level.</p>
+            </div>
+            <div class='ctrl-group' style='border-left-color: #10b981;'>
+                <label>Test Digital Audio Stream:</label>
+                <select id='audio_test_file'>
+                    <option value='dog_bark'>dog-barking.wav</option>
+                </select>
+                <button class='btn-teal' onclick='testAudio()'>Play Selected Sound</button>
+            </div>
         </div>
     </div>
 
@@ -210,7 +230,7 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         </div>
         <div class='grid' style='margin-top:15px;'>
             <div class='ctrl-group' style='border-left-color: #f59e0b;'>
-                <label>Action When Tripped (Obstacle Detected):</label>
+                <label>Physical Action When Tripped:</label>
                 <select id='sensor_tripped_action' onchange='sendSensorConfig()'>
                     <option value='stop'>Stop (Default)</option>
                     <option value='forward'>Walk Forward</option>
@@ -229,9 +249,14 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
                     <option value='stretch_back'>Stretch Back</option>
                     <option value='none'>None (Do nothing)</option>
                 </select>
+                <label style='margin-top:15px;'>Audio Sound When Tripped:</label>
+                <select id='sensor_tripped_audio' onchange='sendSensorConfig()'>
+                    <option value='none'>Mute</option>
+                    <option value='dog_bark'>Dog Bark</option>
+                </select>
             </div>
             <div class='ctrl-group' style='border-left-color: #10b981;'>
-                <label>Action When Cleared (Obstacle Removed):</label>
+                <label>Physical Action When Cleared:</label>
                 <select id='sensor_cleared_action' onchange='sendSensorConfig()'>
                     <option value='stand'>Stand Up</option>
                     <option value='forward'>Walk Forward</option>
@@ -249,6 +274,11 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
                     <option value='stretch_down'>Stretch Down</option>
                     <option value='stretch_back'>Stretch Back</option>
                     <option value='none'>None (Do nothing)</option>
+                </select>
+                <label style='margin-top:15px;'>Audio Sound When Cleared:</label>
+                <select id='sensor_cleared_audio' onchange='sendSensorConfig()'>
+                    <option value='none'>Mute</option>
+                    <option value='dog_bark'>Dog Bark</option>
                 </select>
             </div>
         </div>
@@ -281,6 +311,18 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
 
     function dragStart(id) { activeDrag = id; }
     function dragEnd() { activeDrag = null; }
+
+    // --- Audio Functions ---
+    function updateVolume(val) {
+        document.getElementById('val_volume').innerText = val + "%";
+        fetchJSON('/audio_config', { volume: parseInt(val) });
+    }
+
+    function testAudio() {
+        let sound = document.getElementById('audio_test_file').value;
+        fetchJSON('/audio_play', { sound: sound });
+    }
+    // -----------------------
 
     function toggleSync() {
         syncEnabled = !syncEnabled;
@@ -445,12 +487,16 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
         let react = parseInt(document.getElementById('reaction').value) || 0;
         let tripAct = document.getElementById('sensor_tripped_action').value;
         let clearAct = document.getElementById('sensor_cleared_action').value;
+        let tripAud = document.getElementById('sensor_tripped_audio').value;
+        let clearAud = document.getElementById('sensor_cleared_audio').value;
         fetchJSON('/sensor', {
             enabled: localSensorEnabled, 
             threshold: thresh,
             reaction_time: react,
             tripped_action: tripAct,
-            cleared_action: clearAct
+            cleared_action: clearAct,
+            tripped_audio: tripAud,
+            cleared_audio: clearAud
         });
     }
 
@@ -499,6 +545,11 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
                         btn.innerText = "Enable Sensor"; btn.className = "btn-green";
                     }
                 }
+                
+                if (document.activeElement !== document.getElementById('volume_slider') && data.audio_volume !== undefined) {
+                    document.getElementById('volume_slider').value = data.audio_volume;
+                    document.getElementById('val_volume').innerText = data.audio_volume + "%";
+                }
 
                 if (document.activeElement !== document.getElementById('threshold')) {
                     document.getElementById('threshold').value = data.sensor_threshold;
@@ -513,9 +564,14 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
                 if (document.activeElement !== document.getElementById('sensor_tripped_action')) {
                     document.getElementById('sensor_tripped_action').value = data.sensor_tripped_action || 'stop';
                 }
-
                 if (document.activeElement !== document.getElementById('sensor_cleared_action')) {
                     document.getElementById('sensor_cleared_action').value = data.sensor_cleared_action || 'stand';
+                }
+                if (document.activeElement !== document.getElementById('sensor_tripped_audio')) {
+                    document.getElementById('sensor_tripped_audio').value = data.sensor_tripped_audio || 'none';
+                }
+                if (document.activeElement !== document.getElementById('sensor_cleared_audio')) {
+                    document.getElementById('sensor_cleared_audio').value = data.sensor_cleared_audio || 'none';
                 }
                 
                 setTimeout(updateStatus, 800); 
@@ -544,7 +600,6 @@ static esp_err_t captive_portal_redirect(httpd_req_t *req) {
     return ESP_OK;
 }
 
-// Reusable macro/function to safely ingest POST payloads and prevent socket hanging
 static esp_err_t get_post_json(httpd_req_t *req, cJSON **json_out) {
     *json_out = NULL;
     int total_len = req->content_len;
@@ -592,7 +647,6 @@ static esp_err_t save_post_handler(httpd_req_t *req) {
         if (ssid_item && pass_item) {
             wifi_save_credentials(ssid_item->valuestring, pass_item->valuestring);
             
-            // Clear AP force flag when saving new credentials
             nvs_handle_t my_handle;
             if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
                 nvs_set_u8(my_handle, "force_ap", 0);
@@ -629,6 +683,33 @@ static esp_err_t switch_wifi_post_handler(httpd_req_t *req) {
     }
     httpd_resp_sendstr(req, "OK");
     xTaskCreate(delayed_reboot_task, "reboot_task", 2048, NULL, 5, NULL);
+    return ESP_OK;
+}
+
+// Audio Control Endpoints
+static esp_err_t audio_config_post_handler(httpd_req_t *req) {
+    cJSON *json = NULL;
+    if (get_post_json(req, &json) == ESP_OK) {
+        cJSON *vol_item = cJSON_GetObjectItem(json, "volume");
+        if (vol_item) {
+            audio_set_volume(vol_item->valueint);
+        }
+        cJSON_Delete(json);
+        httpd_resp_sendstr(req, "OK");
+    }
+    return ESP_OK;
+}
+
+static esp_err_t audio_play_post_handler(httpd_req_t *req) {
+    cJSON *json = NULL;
+    if (get_post_json(req, &json) == ESP_OK) {
+        cJSON *snd_item = cJSON_GetObjectItem(json, "sound");
+        if (snd_item) {
+            audio_play(snd_item->valuestring);
+        }
+        cJSON_Delete(json);
+        httpd_resp_sendstr(req, "OK");
+    }
     return ESP_OK;
 }
 
@@ -729,6 +810,13 @@ static esp_err_t sensor_post_handler(httpd_req_t *req) {
         if (trip_item && clear_item) {
             sensor_set_actions(trip_item->valuestring, clear_item->valuestring);
         }
+        
+        cJSON *atrip_item = cJSON_GetObjectItem(json, "tripped_audio");
+        cJSON *aclear_item = cJSON_GetObjectItem(json, "cleared_audio");
+        if (atrip_item && aclear_item) {
+            sensor_set_audio_actions(atrip_item->valuestring, aclear_item->valuestring);
+        }
+        
         cJSON_Delete(json);
         httpd_resp_sendstr(req, "OK");
     }
@@ -758,11 +846,14 @@ static esp_err_t angles_get_handler(httpd_req_t *req) {
     // Safety Routine Metadata Export
     cJSON_AddStringToObject(root, "sensor_tripped_action", sensor_get_tripped_action());
     cJSON_AddStringToObject(root, "sensor_cleared_action", sensor_get_cleared_action());
+    cJSON_AddStringToObject(root, "sensor_tripped_audio", sensor_get_tripped_audio());
+    cJSON_AddStringToObject(root, "sensor_cleared_audio", sensor_get_cleared_audio());
+    
+    cJSON_AddNumberToObject(root, "audio_volume", audio_get_volume());
 
     char *json_str = cJSON_PrintUnformatted(root);
     httpd_resp_set_type(req, "application/json");
     
-    // Kept keep-alive open intentionally to drastically improve TCP pool speeds
     httpd_resp_send(req, json_str, strlen(json_str));
     
     cJSON_Delete(root);
@@ -783,7 +874,6 @@ static esp_err_t reset_cal_post_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
-// Graceful Favicon Handler to suppress missing /favicon.ico logging pollution
 static esp_err_t favicon_get_handler(httpd_req_t *req) {
     httpd_resp_set_type(req, "image/x-icon");
     httpd_resp_set_status(req, "204 No Content");
@@ -795,18 +885,15 @@ void web_server_init() {
     if (server == NULL) {
         httpd_config_t config = HTTPD_DEFAULT_CONFIG();
         
-        // Optimize configuration for swift request processing and thread isolation
-        config.uri_match_fn = httpd_uri_match_wildcard; // Allows wildcard redirects for Captive Portal
-        config.max_uri_handlers = 20;                   // Expand limits to fit our new routing
-        config.core_id = 1;                             // Restrict the HTTP server strictly to Core 1
-        config.task_priority = 5;                       // Standardized to baseline HTTP daemon logic
-        config.stack_size = 10240;                      // Guarantee stack space for processing JSON inputs safely
-        config.lru_purge_enable = true;                 // Purge stale sockets dynamically to maintain active tunnels
-        config.max_open_sockets = 7;                    // Max out default LWIP sockets without requiring sdkconfig rebuilds
-        
-        // --- High-Latency/Fringe Wi-Fi Resilience ---
-        config.recv_wait_timeout = 15;                  // 15 seconds to tolerate packet loss on -85dBm Wi-Fi connections
-        config.send_wait_timeout = 15;                  // 15 seconds to tolerate packet loss on -85dBm Wi-Fi connections
+        config.uri_match_fn = httpd_uri_match_wildcard; 
+        config.max_uri_handlers = 25;                   
+        config.core_id = 1;                             
+        config.task_priority = 5;                       
+        config.stack_size = 10240;                      
+        config.lru_purge_enable = true;                 
+        config.max_open_sockets = 7;                    
+        config.recv_wait_timeout = 15;                  
+        config.send_wait_timeout = 15;                  
         
         if (httpd_start(&server, &config) == ESP_OK) {
             httpd_uri_t uri_index    = { .uri = "/", .method = HTTP_GET, .handler = index_get_handler, .user_ctx = NULL };
@@ -824,7 +911,10 @@ void web_server_init() {
             httpd_uri_t uri_resetcal = { .uri = "/reset_cal", .method = HTTP_POST, .handler = reset_cal_post_handler, .user_ctx = NULL };
             httpd_uri_t uri_favicon  = { .uri = "/favicon.ico", .method = HTTP_GET, .handler = favicon_get_handler, .user_ctx = NULL };
             
-            // Standard OS Captive Portal Endpoints
+            // Audio Additions
+            httpd_uri_t uri_audcfg   = { .uri = "/audio_config", .method = HTTP_POST, .handler = audio_config_post_handler, .user_ctx = NULL };
+            httpd_uri_t uri_audply   = { .uri = "/audio_play", .method = HTTP_POST, .handler = audio_play_post_handler, .user_ctx = NULL };
+
             httpd_uri_t uri_cp1      = { .uri = "/generate_204", .method = HTTP_GET, .handler = captive_portal_redirect, .user_ctx = NULL };
             httpd_uri_t uri_cp2      = { .uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = captive_portal_redirect, .user_ctx = NULL };
             httpd_uri_t uri_cp3      = { .uri = "/ncsi.txt", .method = HTTP_GET, .handler = captive_portal_redirect, .user_ctx = NULL };
@@ -843,6 +933,10 @@ void web_server_init() {
             httpd_register_uri_handler(server, &uri_sensor);
             httpd_register_uri_handler(server, &uri_resetcal);
             httpd_register_uri_handler(server, &uri_favicon);
+            
+            httpd_register_uri_handler(server, &uri_audcfg);
+            httpd_register_uri_handler(server, &uri_audply);
+
             httpd_register_uri_handler(server, &uri_cp1);
             httpd_register_uri_handler(server, &uri_cp2);
             httpd_register_uri_handler(server, &uri_cp3);

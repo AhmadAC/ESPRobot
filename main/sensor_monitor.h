@@ -18,3 +18,8 @@ void sensor_set_reaction_time(int32_t time_ms);
 const char* sensor_get_tripped_action();
 const char* sensor_get_cleared_action();
 void sensor_set_actions(const char* tripped, const char* cleared);
+
+// Audio Action Routing
+const char* sensor_get_tripped_audio();
+const char* sensor_get_cleared_audio();
+void sensor_set_audio_actions(const char* tripped, const char* cleared);

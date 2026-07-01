@@ -1,5 +1,6 @@
 #include "sensor_monitor.h"
 #include "servo_controller.h"
+#include "audio_player.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
@@ -23,6 +24,8 @@ static float current_distance = -1.0f;
 // Dynamic response buffers
 static char tripped_action[16] = "stop";
 static char cleared_action[16] = "stand";
+static char tripped_audio[16] = "none";
+static char cleared_audio[16] = "none";
 
 static void load_sensor_nvs() {
     nvs_handle_t my_handle;
@@ -36,6 +39,12 @@ static void load_sensor_nvs() {
         len = sizeof(cleared_action);
         nvs_get_str(my_handle, "act_clear", cleared_action, &len);
         
+        len = sizeof(tripped_audio);
+        nvs_get_str(my_handle, "aud_trip", tripped_audio, &len);
+        
+        len = sizeof(cleared_audio);
+        nvs_get_str(my_handle, "aud_clear", cleared_audio, &len);
+        
         nvs_close(my_handle);
     }
 }
@@ -44,37 +53,28 @@ static float read_ultrasonic_distance() {
     gpio_set_level(ULTRASONIC_TRIG_PIN, 0);
     esp_rom_delay_us(4);
     gpio_set_level(ULTRASONIC_TRIG_PIN, 1);
-    esp_rom_delay_us(15); // 15us trigger pulse is highly reliable for all sensor variants
+    esp_rom_delay_us(15); 
     gpio_set_level(ULTRASONIC_TRIG_PIN, 0);
 
     int64_t start_time = esp_timer_get_time();
-    int64_t start_timeout = 40000; // 40ms wait limit for Echo rise
+    int64_t start_timeout = 40000; 
     
-    // 1. Wait for Echo pin to go HIGH
     while (gpio_get_level(ULTRASONIC_ECHO_PIN) == 0) {
-        if (esp_timer_get_time() - start_time > start_timeout) {
-            return -1.0f; // Timeout waiting for Echo to start (physical or routing issue)
-        }
+        if (esp_timer_get_time() - start_time > start_timeout) return -1.0f; 
     }
 
     int64_t echo_start = esp_timer_get_time();
-    int64_t echo_timeout = 40000; // 40ms wait limit for Echo decay
+    int64_t echo_timeout = 40000; 
     
-    // 2. Wait for Echo pin to fall back LOW
     while (gpio_get_level(ULTRASONIC_ECHO_PIN) == 1) {
-        if (esp_timer_get_time() - echo_start > echo_timeout) {
-            return -1.0f; // Timeout waiting for Echo to end
-        }
+        if (esp_timer_get_time() - echo_start > echo_timeout) return -1.0f; 
     }
     int64_t echo_end = esp_timer_get_time();
 
     int64_t duration = echo_end - echo_start;
     float distance = (float)duration / 58.0f;
     
-    // Noise filtering (Standard range filter for 2cm - 400cm limits)
-    if (distance > 400.0f || distance < 2.0f) {
-        return -1.0f;
-    }
+    if (distance > 400.0f || distance < 2.0f) return -1.0f;
     
     return distance;
 }
@@ -92,7 +92,6 @@ static void ultrasonic_safety_task(void *pvParameter) {
                 safety_lock_engaged = true;
                 last_detection_time = esp_timer_get_time();
             } else {
-                // Ensure safety lock stays engaged for at least 1 second after last detection
                 if (safety_lock_engaged && (esp_timer_get_time() - last_detection_time > 1000000)) {
                     safety_lock_engaged = false;
                 }
@@ -108,16 +107,17 @@ static void ultrasonic_safety_task(void *pvParameter) {
                 vTaskDelay(pdMS_TO_TICKS(reaction_delay));
             }
             if (safety_lock_engaged) {
-                ESP_LOGW(TAG, "Safety Lock ENGAGED! Obstacle at %.1f cm. Running action: %s", current_distance, tripped_action);
+                ESP_LOGW(TAG, "Lock ENGAGED! Running Action: %s | Audio: %s", tripped_action, tripped_audio);
+                if (strcmp(tripped_audio, "none") != 0) audio_play(tripped_audio);
                 servo_set_action_bypass(tripped_action);
             } else {
-                ESP_LOGI(TAG, "Safety Lock RELEASED. Resuming control. Running action: %s", cleared_action);
+                ESP_LOGI(TAG, "Lock RELEASED. Running Action: %s | Audio: %s", cleared_action, cleared_audio);
+                if (strcmp(cleared_audio, "none") != 0) audio_play(cleared_audio);
                 servo_set_action_bypass(cleared_action);
             }
             last_lock_state = safety_lock_engaged;
         }
 
-        // Delay between sensor sweeps adjusted to 150ms to let old room echo reflections clear
         vTaskDelay(pdMS_TO_TICKS(150));
     }
 }
@@ -125,16 +125,14 @@ static void ultrasonic_safety_task(void *pvParameter) {
 void sensor_monitor_init() {
     load_sensor_nvs();
 
-    // Resetting pins is highly critical on ESP32-S3 as GPIO4/5 default to touch/analog modes
     gpio_reset_pin(ULTRASONIC_TRIG_PIN);
     gpio_set_direction(ULTRASONIC_TRIG_PIN, GPIO_MODE_OUTPUT);
     gpio_set_level(ULTRASONIC_TRIG_PIN, 0);
 
     gpio_reset_pin(ULTRASONIC_ECHO_PIN);
     gpio_set_direction(ULTRASONIC_ECHO_PIN, GPIO_MODE_INPUT);
-    gpio_set_pull_mode(ULTRASONIC_ECHO_PIN, GPIO_FLOATING); // Let the sensor drive the line high and low
+    gpio_set_pull_mode(ULTRASONIC_ECHO_PIN, GPIO_FLOATING);
 
-    // Pinned strictly to Core 0 to prevent interference with Core 1 operations (Web server / Wi-Fi)
     xTaskCreatePinnedToCore(ultrasonic_safety_task, "ultrasonic_task", 4096, NULL, 5, NULL, 0);
 }
 
@@ -169,6 +167,8 @@ bool sensor_is_safety_locked() { return safety_lock_engaged; }
 
 const char* sensor_get_tripped_action() { return tripped_action; }
 const char* sensor_get_cleared_action() { return cleared_action; }
+const char* sensor_get_tripped_audio() { return tripped_audio; }
+const char* sensor_get_cleared_audio() { return cleared_audio; }
 
 void sensor_set_actions(const char* tripped, const char* cleared) {
     strncpy(tripped_action, tripped, sizeof(tripped_action) - 1);
@@ -181,6 +181,22 @@ void sensor_set_actions(const char* tripped, const char* cleared) {
     if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
         nvs_set_str(my_handle, "act_trip", tripped_action);
         nvs_set_str(my_handle, "act_clear", cleared_action);
+        nvs_commit(my_handle);
+        nvs_close(my_handle);
+    }
+}
+
+void sensor_set_audio_actions(const char* tripped, const char* cleared) {
+    strncpy(tripped_audio, tripped, sizeof(tripped_audio) - 1);
+    tripped_audio[sizeof(tripped_audio) - 1] = '\0';
+    
+    strncpy(cleared_audio, cleared, sizeof(cleared_audio) - 1);
+    cleared_audio[sizeof(cleared_audio) - 1] = '\0';
+
+    nvs_handle_t my_handle;
+    if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
+        nvs_set_str(my_handle, "aud_trip", tripped_audio);
+        nvs_set_str(my_handle, "aud_clear", cleared_audio);
         nvs_commit(my_handle);
         nvs_close(my_handle);
     }

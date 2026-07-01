@@ -16,6 +16,7 @@
 #include "servo_controller.h"
 #include "web_server.h"
 #include "ble_manager.h"
+#include "audio_player.h" // NEW
 
 static const char *TAG = "MAIN";
 
@@ -111,6 +112,7 @@ extern "C" void app_main(void) {
     }
 
     // 4. Boot Modular Components
+    audio_player_init(); // Initialize audio sub-system
     sensor_monitor_init();
     servo_controller_init();
     
