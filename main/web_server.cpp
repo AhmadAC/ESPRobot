@@ -800,11 +800,15 @@ void web_server_init() {
         config.max_uri_handlers = 20;                   // Expand limits to fit our new routing
         config.core_id = 1;                             // Restrict the HTTP server strictly to Core 1
         config.task_priority = 5;                       // Standardized to baseline HTTP daemon logic
-        config.stack_size = 8192;                       // Guarantee stack space for processing JSON inputs safely
+        config.stack_size = 10240;                      // Guarantee stack space for processing JSON inputs safely
         config.lru_purge_enable = true;                 // Purge stale sockets dynamically to maintain active tunnels
         config.max_open_sockets = 7;                    // Max out default LWIP sockets without requiring sdkconfig rebuilds
-        config.recv_wait_timeout = 3;                   // Swift socket release on unresponsive clients
-        config.send_wait_timeout = 3;                   // Swift socket release on slow transfers
+        
+        // --- High-Latency/Fringe Wi-Fi Resilience ---
+        config.recv_wait_timeout = 15;                  // 15 seconds to tolerate packet loss on -85dBm Wi-Fi connections
+        config.send_wait_timeout = 15;                  // 15 seconds to tolerate packet loss on -85dBm Wi-Fi connections
+        config.max_req_hdr_len = 4096;                  // Expand header tolerance to prevent '431 Header Too Large' corporate network proxy errors
+        config.max_uri_len = 1024;                      // Expand URI tolerance length
         
         if (httpd_start(&server, &config) == ESP_OK) {
             httpd_uri_t uri_index    = { .uri = "/", .method = HTTP_GET, .handler = index_get_handler, .user_ctx = NULL };
