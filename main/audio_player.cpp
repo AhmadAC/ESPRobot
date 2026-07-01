@@ -22,32 +22,12 @@ static QueueHandle_t audio_queue;
 extern const uint8_t dog_barking_wav_start[] asm("_binary_dog_barking_wav_start");
 extern const uint8_t dog_barking_wav_end[]   asm("_binary_dog_barking_wav_end");
 
-// Standard 44-byte WAV File Header Structure
-#pragma pack(push, 1)
-struct WavHeader {
-    char riff[4];
-    uint32_t riff_size;
-    char wave[4];
-    char fmt[4];
-    uint32_t fmt_size;
-    uint16_t format;
-    uint16_t channels;
-    uint32_t sample_rate;
-    uint32_t byte_rate;
-    uint16_t block_align;
-    uint16_t bit_depth;
-    char data[4];
-    uint32_t data_size;
-};
-#pragma pack(pop)
-
 static void load_audio_nvs() {
     nvs_handle_t my_handle;
     if (nvs_open("storage", NVS_READONLY, &my_handle) == ESP_OK) {
         nvs_get_i32(my_handle, "aud_vol", &current_volume);
         nvs_close(my_handle);
     }
-    // Safety clamp
     if (current_volume < 0) current_volume = 0;
     if (current_volume > 100) current_volume = 100;
 }
@@ -68,50 +48,87 @@ static void audio_task(void *pvParameter) {
             }
             
             if (wav_start != NULL && wav_end > wav_start) {
-                WavHeader* header = (WavHeader*)wav_start;
                 
-                // Verify it is a valid WAV file
-                if (strncmp(header->riff, "RIFF", 4) == 0 && strncmp(header->wave, "WAVE", 4) == 0) {
-                    ESP_LOGI(TAG, "Playing %s: %lu Hz, %d bit, %d ch", sound_req, header->sample_rate, header->bit_depth, header->channels);
+                uint32_t sample_rate = 44100;
+                uint16_t channels = 2;
+                uint16_t bit_depth = 16;
+                const uint8_t* audio_data = NULL;
+                uint32_t data_size = 0;
+
+                // Dynamic WAV RIFF Chunk Parser (Safely skips LIST/INFO metadata chunks)
+                if (strncmp((const char*)wav_start, "RIFF", 4) == 0) {
+                    size_t offset = 12; // Skip RIFF header, file size, and WAVE format
                     
-                    // Reconfigure I2S Clock on the fly to match the WAV file perfectly
+                    while (offset < (wav_end - wav_start) - 8) {
+                        char chunk_id[5] = {0};
+                        memcpy(chunk_id, wav_start + offset, 4);
+                        uint32_t chunk_size = *(uint32_t*)(wav_start + offset + 4);
+                        offset += 8;
+
+                        if (strcmp(chunk_id, "fmt ") == 0) {
+                            channels = *(uint16_t*)(wav_start + offset + 2);
+                            sample_rate = *(uint32_t*)(wav_start + offset + 4);
+                            bit_depth = *(uint16_t*)(wav_start + offset + 14);
+                        } else if (strcmp(chunk_id, "data") == 0) {
+                            audio_data = wav_start + offset;
+                            data_size = chunk_size;
+                            break; // We found the audio payload, stop parsing
+                        }
+                        offset += chunk_size; // Skip unknown chunks
+                    }
+                }
+
+                if (audio_data != NULL && data_size > 0) {
+                    ESP_LOGI(TAG, "Playing %s: %lu Hz, %d bit, %d ch | Size: %lu bytes", 
+                             sound_req, sample_rate, bit_depth, channels, data_size);
+                    
+                    // Reconfigure I2S Clock to match the WAV file perfectly
                     i2s_channel_disable(tx_chan);
-                    i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(header->sample_rate);
+                    
+                    i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(sample_rate);
                     i2s_channel_reconfig_std_clock(tx_chan, &clk_cfg);
                     
-                    i2s_std_slot_config_t slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, 
-                        header->channels == 2 ? I2S_SLOT_MODE_STEREO : I2S_SLOT_MODE_MONO);
+                    // MAX98357A requires standard PHILIPS formatting, NOT MSB/Left-Justified
+                    i2s_std_slot_config_t slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(
+                        I2S_DATA_BIT_WIDTH_16BIT, 
+                        channels == 2 ? I2S_SLOT_MODE_STEREO : I2S_SLOT_MODE_MONO
+                    );
                     i2s_channel_reconfig_std_slot(tx_chan, &slot_cfg);
                     
                     i2s_channel_enable(tx_chan);
                     
-                    const uint8_t* audio_data = wav_start + sizeof(WavHeader);
-                    size_t data_size = header->data_size;
-                    
-                    // Prevent reading past the embedded binary end
+                    // Prevent reading past the embedded binary end if file is corrupted
                     if (audio_data + data_size > wav_end) {
                         data_size = wav_end - audio_data;
                     }
                     
                     int16_t* pcm_samples = (int16_t*)audio_data;
-                    size_t num_samples = data_size / 2; // 16-bit samples
+                    size_t num_samples = data_size / 2; // 16-bit integers
                     
                     float vol_mult = (float)current_volume / 100.0f;
                     
                     // Create a small buffer to scale volume in RAM without blocking
-                    const size_t CHUNK_SAMPLES = 256;
+                    const size_t CHUNK_SAMPLES = 512; 
                     int16_t out_buffer[CHUNK_SAMPLES];
                     size_t bytes_written;
                     
                     for (size_t i = 0; i < num_samples; i += CHUNK_SAMPLES) {
                         size_t chunk_size = (num_samples - i < CHUNK_SAMPLES) ? (num_samples - i) : CHUNK_SAMPLES;
                         
+                        // Software Volume Application
                         for (size_t j = 0; j < chunk_size; j++) {
-                            // Apply software volume scaling
-                            out_buffer[j] = (int16_t)(pcm_samples[i + j] * vol_mult);
+                            if (current_volume == 0) {
+                                out_buffer[j] = 0; // Absolute Mute
+                            } else {
+                                out_buffer[j] = (int16_t)(pcm_samples[i + j] * vol_mult);
+                            }
                         }
                         
-                        i2s_channel_write(tx_chan, out_buffer, chunk_size * 2, &bytes_written, portMAX_DELAY);
+                        esp_err_t err = i2s_channel_write(tx_chan, out_buffer, chunk_size * 2, &bytes_written, portMAX_DELAY);
+                        if (err != ESP_OK) {
+                            ESP_LOGE(TAG, "I2S Buffer Write Failed: %s", esp_err_to_name(err));
+                            break; // Abort this track
+                        }
                     }
                     
                     // Flush the DMA buffers to ensure the sound finishes cleanly
@@ -119,7 +136,7 @@ static void audio_task(void *pvParameter) {
                     ESP_LOGI(TAG, "Playback finished.");
                     
                 } else {
-                    ESP_LOGE(TAG, "Invalid WAV header in embedded file.");
+                    ESP_LOGE(TAG, "Invalid WAV structure: Could not find 'fmt ' or 'data' chunk.");
                 }
             }
         }
@@ -134,8 +151,8 @@ void audio_player_init() {
     ESP_ERROR_CHECK(i2s_new_channel(&chan_cfg, &tx_chan, NULL));
 
     i2s_std_config_t std_cfg = {
-        .clk_cfg  = I2S_STD_CLK_DEFAULT_CONFIG(44100), // Default boot state
-        .slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO),
+        .clk_cfg  = I2S_STD_CLK_DEFAULT_CONFIG(44100),
+        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO),
         .gpio_cfg = {
             .mclk = I2S_GPIO_UNUSED,
             .bclk = I2S_BCLK_PIN,
