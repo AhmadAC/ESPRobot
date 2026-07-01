@@ -15,7 +15,7 @@ static const char *TAG = "AUDIO";
 #define I2S_DIN_PIN  GPIO_NUM_8
 
 static i2s_chan_handle_t tx_chan;
-static int current_volume = 50; // 0-100 Default volume
+static int32_t current_volume = 50; // 0-100 Default volume (Explicitly typed as int32_t for NVS compatibility)
 static QueueHandle_t audio_queue;
 
 // Access the embedded WAV file created by CMake
@@ -160,7 +160,7 @@ void audio_player_init() {
 void audio_set_volume(int volume_pct) {
     if (volume_pct < 0) volume_pct = 0;
     if (volume_pct > 100) volume_pct = 100;
-    current_volume = volume_pct;
+    current_volume = (int32_t)volume_pct;
     
     nvs_handle_t my_handle;
     if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
@@ -171,7 +171,7 @@ void audio_set_volume(int volume_pct) {
 }
 
 int audio_get_volume() {
-    return current_volume;
+    return (int)current_volume;
 }
 
 void audio_play(const char* sound_name) {
@@ -181,6 +181,4 @@ void audio_play(const char* sound_name) {
     strncpy(req, sound_name, sizeof(req) - 1);
     req[sizeof(req) - 1] = '\0';
     
-    // Add to queue (non-blocking). If queue is full (spamming play), it ignores the request.
-    xQueueSend(audio_queue, &req, 0); 
-}
+    // Add to queue (non-blocking). If queue is full (spamming p
