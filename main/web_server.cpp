@@ -807,8 +807,6 @@ void web_server_init() {
         // --- High-Latency/Fringe Wi-Fi Resilience ---
         config.recv_wait_timeout = 15;                  // 15 seconds to tolerate packet loss on -85dBm Wi-Fi connections
         config.send_wait_timeout = 15;                  // 15 seconds to tolerate packet loss on -85dBm Wi-Fi connections
-        config.max_req_hdr_len = 4096;                  // Expand header tolerance to prevent '431 Header Too Large' corporate network proxy errors
-        config.max_uri_len = 1024;                      // Expand URI tolerance length
         
         if (httpd_start(&server, &config) == ESP_OK) {
             httpd_uri_t uri_index    = { .uri = "/", .method = HTTP_GET, .handler = index_get_handler, .user_ctx = NULL };
