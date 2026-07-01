@@ -895,7 +895,7 @@ static esp_err_t favicon_get_handler(httpd_req_t *req) {
 }
 
 static esp_err_t silent_404_handler(httpd_req_t *req) {
-    // Return standard error to clear the socket quickly
+    // Return standard error to clear the socket quickly without logging noise
     httpd_resp_send_404(req);
     return ESP_OK;
 }
@@ -921,6 +921,18 @@ void web_server_init() {
         config.send_wait_timeout = 15;                  
         
         if (httpd_start(&server, &config) == ESP_OK) {
+            
+            // Standard OS Captive Portal Endpoints (Exact Matches First)
+            httpd_uri_t uri_cp1      = { .uri = "/generate_204", .method = HTTP_GET, .handler = captive_portal_redirect, .user_ctx = NULL };
+            httpd_uri_t uri_cp2      = { .uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = captive_portal_redirect, .user_ctx = NULL };
+            httpd_uri_t uri_cp3      = { .uri = "/ncsi.txt", .method = HTTP_GET, .handler = captive_portal_redirect, .user_ctx = NULL };
+            
+            // Register them before any wildcards
+            httpd_register_uri_handler(server, &uri_cp1);
+            httpd_register_uri_handler(server, &uri_cp2);
+            httpd_register_uri_handler(server, &uri_cp3);
+
+            // App Endpoints
             httpd_uri_t uri_index    = { .uri = "/", .method = HTTP_GET, .handler = index_get_handler, .user_ctx = NULL };
             httpd_uri_t uri_scan     = { .uri = "/scan", .method = HTTP_GET, .handler = scan_get_handler, .user_ctx = NULL };
             httpd_uri_t uri_save     = { .uri = "/save", .method = HTTP_POST, .handler = save_post_handler, .user_ctx = NULL };
@@ -935,20 +947,14 @@ void web_server_init() {
             httpd_uri_t uri_sensor   = { .uri = "/sensor", .method = HTTP_POST, .handler = sensor_post_handler, .user_ctx = NULL };
             httpd_uri_t uri_resetcal = { .uri = "/reset_cal", .method = HTTP_POST, .handler = reset_cal_post_handler, .user_ctx = NULL };
             httpd_uri_t uri_favicon  = { .uri = "/favicon.ico", .method = HTTP_GET, .handler = favicon_get_handler, .user_ctx = NULL };
-            
-            // Audio Additions
             httpd_uri_t uri_audcfg   = { .uri = "/audio_config", .method = HTTP_POST, .handler = audio_config_post_handler, .user_ctx = NULL };
             httpd_uri_t uri_audply   = { .uri = "/audio_play", .method = HTTP_POST, .handler = audio_play_post_handler, .user_ctx = NULL };
             httpd_uri_t uri_audstp   = { .uri = "/audio_stop", .method = HTTP_POST, .handler = audio_stop_post_handler, .user_ctx = NULL };
             
-            // Background ping wildcard silencers
-            httpd_uri_t uri_gen204   = { .uri = "/generate_204*", .method = HTTP_GET, .handler = silent_404_handler, .user_ctx = NULL };
-            httpd_uri_t uri_mmtls    = { .uri = "/mmtls/*", .method = HTTP_GET, .handler = silent_404_handler, .user_ctx = NULL };
-            httpd_uri_t uri_conntest = { .uri = "/connecttest.txt", .method = HTTP_GET, .handler = silent_404_handler, .user_ctx = NULL };
-
-            httpd_uri_t uri_cp1      = { .uri = "/generate_204", .method = HTTP_GET, .handler = captive_portal_redirect, .user_ctx = NULL };
-            httpd_uri_t uri_cp2      = { .uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = captive_portal_redirect, .user_ctx = NULL };
-            httpd_uri_t uri_cp3      = { .uri = "/ncsi.txt", .method = HTTP_GET, .handler = captive_portal_redirect, .user_ctx = NULL };
+            // Background ping silencers (Using underscore to not overlap /generate_204 exact match)
+            httpd_uri_t uri_gen204_junk = { .uri = "/generate_204_*", .method = HTTP_GET, .handler = silent_404_handler, .user_ctx = NULL };
+            httpd_uri_t uri_mmtls       = { .uri = "/mmtls/*", .method = HTTP_GET, .handler = silent_404_handler, .user_ctx = NULL };
+            httpd_uri_t uri_conntest    = { .uri = "/connecttest.txt", .method = HTTP_GET, .handler = silent_404_handler, .user_ctx = NULL };
             
             httpd_register_uri_handler(server, &uri_index);
             httpd_register_uri_handler(server, &uri_scan);
@@ -964,19 +970,13 @@ void web_server_init() {
             httpd_register_uri_handler(server, &uri_sensor);
             httpd_register_uri_handler(server, &uri_resetcal);
             httpd_register_uri_handler(server, &uri_favicon);
-            
             httpd_register_uri_handler(server, &uri_audcfg);
             httpd_register_uri_handler(server, &uri_audply);
             httpd_register_uri_handler(server, &uri_audstp);
             
-            // Register silencers
-            httpd_register_uri_handler(server, &uri_gen204);
+            httpd_register_uri_handler(server, &uri_gen204_junk);
             httpd_register_uri_handler(server, &uri_mmtls);
             httpd_register_uri_handler(server, &uri_conntest);
-
-            httpd_register_uri_handler(server, &uri_cp1);
-            httpd_register_uri_handler(server, &uri_cp2);
-            httpd_register_uri_handler(server, &uri_cp3);
             
             ESP_LOGI(TAG, "Dashboard Server initialized successfully on port %d", config.server_port);
         }
