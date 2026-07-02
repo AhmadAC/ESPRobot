@@ -19,3 +19,6 @@ CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
 # HTTP Server tolerances for poor Wi-Fi and corporate proxies
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=4096
 CONFIG_HTTPD_MAX_URI_LEN=1024
+
+# CRITICAL FIX: Increase LwIP Sockets to handle Captive Portal background spam + UI Polling
+CONFIG_LWIP_MAX_SOCKETS=16

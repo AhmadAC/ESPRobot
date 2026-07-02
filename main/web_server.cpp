@@ -20,8 +20,8 @@ static void delayed_reboot_task(void *pvParameter) {
 }
 
 static esp_err_t index_get_handler(httpd_req_t *req) {
-    // CRITICAL FIX: Ensure captive portal browsers know this is an HTML page to render
     httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_hdr(req, "Connection", "close"); // Free socket immediately
     
     const char* html = R"raw_html(
 <!DOCTYPE html>
@@ -604,6 +604,7 @@ static esp_err_t index_get_handler(httpd_req_t *req) {
 }
 
 static esp_err_t captive_portal_redirect(httpd_req_t *req) {
+    httpd_resp_set_hdr(req, "Connection", "close"); // Free socket immediately
     httpd_resp_set_status(req, "302 Found");
     httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/");
     httpd_resp_send(req, NULL, 0);
@@ -642,6 +643,7 @@ static esp_err_t get_post_json(httpd_req_t *req, cJSON **json_out) {
 }
 
 static esp_err_t scan_get_handler(httpd_req_t *req) {
+    httpd_resp_set_hdr(req, "Connection", "close"); 
     char* json_str = wifi_scan_networks_json();
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, json_str, strlen(json_str));
@@ -650,6 +652,7 @@ static esp_err_t scan_get_handler(httpd_req_t *req) {
 }
 
 static esp_err_t save_post_handler(httpd_req_t *req) {
+    httpd_resp_set_hdr(req, "Connection", "close");
     cJSON *json = NULL;
     if (get_post_json(req, &json) == ESP_OK) {
         cJSON *ssid_item = cJSON_GetObjectItem(json, "ssid");
@@ -673,6 +676,7 @@ static esp_err_t save_post_handler(httpd_req_t *req) {
 }
 
 static esp_err_t switch_ap_post_handler(httpd_req_t *req) {
+    httpd_resp_set_hdr(req, "Connection", "close");
     nvs_handle_t my_handle;
     if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
         nvs_set_u8(my_handle, "force_ap", 1);
@@ -685,6 +689,7 @@ static esp_err_t switch_ap_post_handler(httpd_req_t *req) {
 }
 
 static esp_err_t switch_wifi_post_handler(httpd_req_t *req) {
+    httpd_resp_set_hdr(req, "Connection", "close");
     nvs_handle_t my_handle;
     if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
         nvs_set_u8(my_handle, "force_ap", 0);
@@ -696,8 +701,8 @@ static esp_err_t switch_wifi_post_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
-// Audio Control Endpoints
 static esp_err_t audio_config_post_handler(httpd_req_t *req) {
+    httpd_resp_set_hdr(req, "Connection", "close");
     cJSON *json = NULL;
     if (get_post_json(req, &json) == ESP_OK) {
         cJSON *vol_item = cJSON_GetObjectItem(json, "volume");
@@ -711,6 +716,7 @@ static esp_err_t audio_config_post_handler(httpd_req_t *req) {
 }
 
 static esp_err_t audio_play_post_handler(httpd_req_t *req) {
+    httpd_resp_set_hdr(req, "Connection", "close");
     cJSON *json = NULL;
     if (get_post_json(req, &json) == ESP_OK) {
         cJSON *snd_item = cJSON_GetObjectItem(json, "sound");
@@ -724,12 +730,14 @@ static esp_err_t audio_play_post_handler(httpd_req_t *req) {
 }
 
 static esp_err_t audio_stop_post_handler(httpd_req_t *req) {
+    httpd_resp_set_hdr(req, "Connection", "close");
     audio_stop();
     httpd_resp_sendstr(req, "OK");
     return ESP_OK;
 }
 
 static esp_err_t servo_post_handler(httpd_req_t *req) {
+    httpd_resp_set_hdr(req, "Connection", "close");
     cJSON *json = NULL;
     if (get_post_json(req, &json) == ESP_OK) {
         cJSON *ll = cJSON_GetObjectItem(json, "ll");
@@ -756,6 +764,7 @@ static esp_err_t servo_post_handler(httpd_req_t *req) {
 }
 
 static esp_err_t action_post_handler(httpd_req_t *req) {
+    httpd_resp_set_hdr(req, "Connection", "close");
     cJSON *json = NULL;
     if (get_post_json(req, &json) == ESP_OK) {
         cJSON *act_item = cJSON_GetObjectItem(json, "action");
@@ -770,6 +779,7 @@ static esp_err_t action_post_handler(httpd_req_t *req) {
 }
 
 static esp_err_t calibrations_json_get_handler(httpd_req_t *req) {
+    httpd_resp_set_hdr(req, "Connection", "close");
     char* json_str = servo_get_calibrations_json();
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, json_str, strlen(json_str));
@@ -778,6 +788,7 @@ static esp_err_t calibrations_json_get_handler(httpd_req_t *req) {
 }
 
 static esp_err_t download_cal_get_handler(httpd_req_t *req) {
+    httpd_resp_set_hdr(req, "Connection", "close");
     char* cpp_code = servo_get_calibrations_cpp();
     httpd_resp_set_type(req, "text/plain");
     httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"esprobot_defaults.txt\"");
@@ -787,6 +798,7 @@ static esp_err_t download_cal_get_handler(httpd_req_t *req) {
 }
 
 static esp_err_t calibrate_post_handler(httpd_req_t *req) {
+    httpd_resp_set_hdr(req, "Connection", "close");
     cJSON *json = NULL;
     if (get_post_json(req, &json) == ESP_OK) {
         cJSON *tgt_item = cJSON_GetObjectItem(json, "target");
@@ -807,6 +819,7 @@ static esp_err_t calibrate_post_handler(httpd_req_t *req) {
 }
 
 static esp_err_t sensor_post_handler(httpd_req_t *req) {
+    httpd_resp_set_hdr(req, "Connection", "close");
     cJSON *json = NULL;
     if (get_post_json(req, &json) == ESP_OK) {
         cJSON *en_item = cJSON_GetObjectItem(json, "enabled");
@@ -840,6 +853,9 @@ static esp_err_t sensor_post_handler(httpd_req_t *req) {
 }
 
 static esp_err_t angles_get_handler(httpd_req_t *req) {
+    // CRITICAL: Prevent socket overflow due to the 800ms frontend polling
+    httpd_resp_set_hdr(req, "Connection", "close");
+    
     int ang_ll, ang_hr, ang_hl, ang_lr;
     int off_ll, off_hr, off_hl, off_lr;
     
@@ -859,7 +875,6 @@ static esp_err_t angles_get_handler(httpd_req_t *req) {
     cJSON_AddNumberToObject(root, "sensor_threshold", sensor_get_threshold());
     cJSON_AddNumberToObject(root, "sensor_reaction_time", sensor_get_reaction_time());
     
-    // Safety Routine Metadata Export
     cJSON_AddStringToObject(root, "sensor_tripped_action", sensor_get_tripped_action());
     cJSON_AddStringToObject(root, "sensor_cleared_action", sensor_get_cleared_action());
     cJSON_AddStringToObject(root, "sensor_tripped_audio", sensor_get_tripped_audio());
@@ -878,6 +893,7 @@ static esp_err_t angles_get_handler(httpd_req_t *req) {
 }
 
 static esp_err_t reset_cal_post_handler(httpd_req_t *req) {
+    httpd_resp_set_hdr(req, "Connection", "close");
     nvs_handle_t my_handle;
     if (nvs_open("storage", NVS_READWRITE, &my_handle) == ESP_OK) {
         nvs_erase_all(my_handle);
@@ -891,6 +907,7 @@ static esp_err_t reset_cal_post_handler(httpd_req_t *req) {
 }
 
 static esp_err_t favicon_get_handler(httpd_req_t *req) {
+    httpd_resp_set_hdr(req, "Connection", "close");
     httpd_resp_set_type(req, "image/x-icon");
     httpd_resp_set_status(req, "204 No Content");
     httpd_resp_send(req, NULL, 0);
@@ -898,32 +915,30 @@ static esp_err_t favicon_get_handler(httpd_req_t *req) {
 }
 
 void web_server_init() {
-    
-    // Shut off all annoying warnings and errors generated by background pings (Phones/Windows)
     esp_log_level_set("httpd_uri", ESP_LOG_ERROR);
     esp_log_level_set("httpd_txrx", ESP_LOG_ERROR);
     esp_log_level_set("httpd_parse", ESP_LOG_ERROR);
 
     if (server == NULL) {
-        
-        // Exact identical daemon configuration as the IR AC code project
         httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+        
         config.uri_match_fn = httpd_uri_match_wildcard;
         config.max_uri_handlers = 25; 
         
+        // Increase maximum sockets to prevent "error in accept (23)" crashes
+        config.max_open_sockets = 13;
+        config.lru_purge_enable = true;                 
+        
         if (httpd_start(&server, &config) == ESP_OK) {
             
-            // Standard OS Captive Portal Endpoints (Exact Matches First)
             httpd_uri_t uri_cp1      = { .uri = "/generate_204", .method = HTTP_GET, .handler = captive_portal_redirect, .user_ctx = NULL };
             httpd_uri_t uri_cp2      = { .uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = captive_portal_redirect, .user_ctx = NULL };
             httpd_uri_t uri_cp3      = { .uri = "/ncsi.txt", .method = HTTP_GET, .handler = captive_portal_redirect, .user_ctx = NULL };
             
-            // Register them before any wildcards
             httpd_register_uri_handler(server, &uri_cp1);
             httpd_register_uri_handler(server, &uri_cp2);
             httpd_register_uri_handler(server, &uri_cp3);
 
-            // App Endpoints
             httpd_uri_t uri_index    = { .uri = "/", .method = HTTP_GET, .handler = index_get_handler, .user_ctx = NULL };
             httpd_uri_t uri_scan     = { .uri = "/scan", .method = HTTP_GET, .handler = scan_get_handler, .user_ctx = NULL };
             httpd_uri_t uri_save     = { .uri = "/save", .method = HTTP_POST, .handler = save_post_handler, .user_ctx = NULL };
@@ -960,7 +975,6 @@ void web_server_init() {
             httpd_register_uri_handler(server, &uri_audply);
             httpd_register_uri_handler(server, &uri_audstp);
             
-            // Catch-all fallback endpoint for captive portal redirection (Intercepts random device URLs)
             httpd_uri_t uri_fallback = { .uri = "/*", .method = HTTP_GET, .handler = captive_portal_redirect, .user_ctx = NULL };
             httpd_register_uri_handler(server, &uri_fallback);
             
