@@ -165,13 +165,14 @@ void wifi_manager_init() {
         esp_netif_dhcps_start(ap_netif);
     }
 
-    // Configure AP Mode profile
+    // Configure AP Mode profile (CRITICAL FIX: Matching the WPA2_PSK of the IR AC code)
     wifi_config_t ap_config = {};
     strcpy((char*)ap_config.ap.ssid, "ESPRobot_Config");
+    strcpy((char*)ap_config.ap.password, "12345678");
     ap_config.ap.ssid_len = strlen("ESPRobot_Config");
     ap_config.ap.channel = 1;
     ap_config.ap.max_connection = 4;
-    ap_config.ap.authmode = WIFI_AUTH_OPEN; 
+    ap_config.ap.authmode = WIFI_AUTH_WPA2_PSK; 
 
     // Temporarily set APSTA so we can apply the hardware AP config without ESP_ERR_WIFI_MODE
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));

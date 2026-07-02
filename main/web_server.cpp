@@ -20,6 +20,9 @@ static void delayed_reboot_task(void *pvParameter) {
 }
 
 static esp_err_t index_get_handler(httpd_req_t *req) {
+    // CRITICAL FIX: Ensure captive portal browsers know this is an HTML page to render
+    httpd_resp_set_type(req, "text/html");
+    
     const char* html = R"raw_html(
 <!DOCTYPE html>
 <html>
@@ -902,17 +905,11 @@ void web_server_init() {
     esp_log_level_set("httpd_parse", ESP_LOG_ERROR);
 
     if (server == NULL) {
-        httpd_config_t config = HTTPD_DEFAULT_CONFIG();
         
-        config.uri_match_fn = httpd_uri_match_wildcard; // Required for wildcards (*)
-        config.max_uri_handlers = 25;                   
-        config.core_id = 1;                             
-        config.task_priority = 5;                       
-        config.stack_size = 10240;                      
-        config.lru_purge_enable = true;                 
-        config.max_open_sockets = 7;                    
-        config.recv_wait_timeout = 15;                  
-        config.send_wait_timeout = 15;                  
+        // Exact identical daemon configuration as the IR AC code project
+        httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+        config.uri_match_fn = httpd_uri_match_wildcard;
+        config.max_uri_handlers = 25; 
         
         if (httpd_start(&server, &config) == ESP_OK) {
             
